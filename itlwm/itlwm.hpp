@@ -292,11 +292,11 @@ public:
 private:
     IOGatedOutputQueue*    fOutputQueue;
     IOInterruptEventSource* fInterrupt;
-    IOEthernetInterface *netif;
     IOWorkLoop *fWorkloop;
     IOCommandGate*        fCommandGate;
     struct pci_attach_args pci;
     struct iwm_softc com;
+    IONetworkMedium *autoMedium;
     
     IOLock *fwLoadLock;
 };
