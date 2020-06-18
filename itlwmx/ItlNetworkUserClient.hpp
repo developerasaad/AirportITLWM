@@ -1,17 +1,16 @@
-//
-//  ItlNetworkUserClient.hpp
-//  TestService
-//
-//  Created by 钟先耀 on 2020/4/14.
-//  Copyright © 2020 lhy. All rights reserved.
-//
-
 /*
- * This program and the accompanying materials are licensed and made available
- * under the terms and conditions of the The 3-Clause BSD License
- * which accompanies this distribution. The full text of the license may be found at
- * https://opensource.org/licenses/BSD-3-Clause
- */
+* Copyright (C) 2020  钟先耀
+*
+* This program is free software; you can redistribute it and/or modify
+* it under the terms of the GNU General Public License as published by
+* the Free Software Foundation; either version 2 of the License, or
+* (at your option) any later version.
+*
+* This program is distributed in the hope that it will be useful,
+* but WITHOUT ANY WARRANTY; without even the implied warranty of
+* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+* GNU General Public License for more details.
+*/
 
 #ifndef ItlNetworkUserClient_hpp
 #define ItlNetworkUserClient_hpp
@@ -24,10 +23,6 @@
 #include "Common.h"
 
 typedef IOReturn (*IOControlMethodAction)(OSObject * target, void *data, bool isSet);
-struct IOControlMethod {
-    IOControlMethodAction function;
-    
-};
 
 class ItlNetworkUserClient : public IOUserClient {
     
