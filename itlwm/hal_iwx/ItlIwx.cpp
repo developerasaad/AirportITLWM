@@ -2294,32 +2294,23 @@ iwx_write_mem32(struct iwx_softc *sc, uint32_t addr, uint32_t val)
 /*
  * A register that reads as all ones means the device is not answering on
  * the bus. That can happen briefly while the PCIe link comes back after
- * resume, so it is treated as "not ready yet"; only this many consecutive
- * all-ones reads (about 1 ms) count as the device being gone.
+ * resume, so an all-ones read never counts as success but polling goes on
+ * until the caller's timeout.
  */
-#define IWX_POLL_DEAD_READS 100
-
 int ItlIwx::
 iwx_poll_bit(struct iwx_softc *sc, int reg, uint32_t bits, uint32_t mask,
              int timo)
 {
     uint32_t val;
-    int dead = 0;
     
     for (;;) {
         val = IWX_READ(sc, reg);
-        if (val == 0xffffffff) {
-            if (++dead >= IWX_POLL_DEAD_READS) {
+        if (val != 0xffffffff && (val & mask) == (bits & mask))
+            return 1;
+        if (timo < 10) {
+            if (val == 0xffffffff)
                 XYLog("%s: device not responding (reg 0x%x reads 0xffffffff)\n",
                       DEVNAME(sc), reg);
-                return 0;
-            }
-        } else {
-            dead = 0;
-            if ((val & mask) == (bits & mask))
-                return 1;
-        }
-        if (timo < 10) {
             return 0;
         }
         timo -= 10;
