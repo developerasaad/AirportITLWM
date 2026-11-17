@@ -22,6 +22,9 @@ OSDefineMetaClassAndStructors(CTimeout, OSObject)
 IO80211WorkQueue *_fWorkloop;
 IOCommandGate *_fCommandGate;
 
+// Maximum number of scan results served in one enumeration snapshot.
+#define kScanSnapshotMax 96
+
 void AirportItlwm::releaseAll()
 {
 #ifdef AIRPORT_WCL
@@ -1426,9 +1429,6 @@ void AirportItlwm::setPowerStateOn()
 // Shared join / scan-request lifecycle (Skywalk paths; WCL keeps its own
 // request machinery but the helpers are harmless there)
 // ---------------------------------------------------------------------------
-
-// Maximum number of scan results served in one enumeration snapshot.
-#define kScanSnapshotMax 96
 
 static int airportChanFlag2appleScanFlag(int flags)
 {
