@@ -85,8 +85,11 @@ jobs:
           fwbytes=$(stat -f %z "$binfile")
           echo "binary_size=$fwbytes"
           [ "$fwbytes" -gt 10000000 ] || { echo "FAIL: binary too small to contain firmware"; exit 1; }
+          # Dump strings once: grep -q on a pipe would SIGPIPE `strings` under
+          # pipefail as soon as it matches, falsely failing the check.
+          strings "$binfile" > /tmp/fw-strings.txt
           for fw in iwm-9000-46 iwm-9260-46 iwm-8265-36 iwlwifi-Qu-b0-jf-b0-68 iwlwifi-Qu-c0-jf-b0-68 iwlwifi-QuZ-a0-jf-b0-68; do
-            strings "$binfile" | grep -q "$fw" || { echo "FAIL: firmware $fw not embedded"; exit 1; }
+            grep -q "$fw" /tmp/fw-strings.txt || { echo "FAIL: firmware $fw not embedded"; exit 1; }
             echo "fw $fw -> embedded"
           done
           # Undefined symbols should be covered by declared OSBundleLibraries.
