@@ -153,6 +153,7 @@ public:
     /* Abort an in-flight firmware scan in favor of a directed Apple80211
      * scan request; the abort runs as a queued HAL task. */
     void requestScanAbort() override;
+    bool isFirmwareScanning() override { return com.sc_flags & IWX_FLAG_SCANNING; }
     IOReturn enable(IONetworkInterface *netif) override;
     IOReturn disable(IONetworkInterface *netif) override;
     virtual struct ieee80211com *get80211Controller() override;

@@ -1085,7 +1085,13 @@ setASSOCIATE(OSObject *object,
     // airportd's ~10s join window).  Mirrors the V2 Skywalk path.
     if (ad->ad_mode != APPLE80211_AP_MODE_IBSS) {
         struct ieee80211_node *ni = ieee80211_find_join_target(ic);
-        if (ni != NULL) {
+        if (ni != NULL && ic->ic_state == IEEE80211_S_SCAN &&
+            fHalService->isFirmwareScanning()) {
+            /* Scan in flight: abort it; the completion path joins the
+             * cached target through the standard state machine. */
+            XYLog("join: firmware scan in flight, aborting to join cached BSS\n");
+            fHalService->requestScanAbort();
+        } else if (ni != NULL) {
             XYLog("join: fast-path BSSID=%s chan=%d rssi=%d esslen=%d\n",
                   ether_sprintf(ni->ni_bssid),
                   ieee80211_chan2ieee(ic, ni->ni_chan),
@@ -1404,7 +1410,7 @@ setSCAN_REQ(OSObject *object,
     }
     if (ic->ic_state == IEEE80211_S_RUN) {
         ieee80211_begin_cache_bgscan(&ic->ic_ac.ac_if);
-    } else {
+    } else if (ic->ic_scan_restricted && fHalService->isFirmwareScanning()) {
         fHalService->requestScanAbort();
     }
     if (scanSource) {
@@ -1449,7 +1455,7 @@ setSCAN_REQ_MULTIPLE(OSObject *object, struct apple80211_scan_multiple_data *sd)
     }
     if (ic->ic_state == IEEE80211_S_RUN) {
         ieee80211_begin_cache_bgscan(&ic->ic_ac.ac_if);
-    } else {
+    } else if (ic->ic_scan_restricted && fHalService->isFirmwareScanning()) {
         fHalService->requestScanAbort();
     }
     if (scanSource) {

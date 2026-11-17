@@ -46,6 +46,7 @@ public:
      * Safe to call from the command gate; the abort itself runs as a
      * queued task on the HAL task queue. */
     void requestScanAbort() override;
+    bool isFirmwareScanning() override { return com.sc_flags & IWM_FLAG_SCANNING; }
 #ifdef AIRPORT_VTD
     bool inRateControlGate() {
         return getMainWorkLoop()->inGate();

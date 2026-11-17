@@ -1543,6 +1543,18 @@ bool AirportItlwm::attemptFastJoin()
           ether_sprintf(ni->ni_bssid),
           ieee80211_chan2ieee(ic, ni->ni_chan),
           ni->ni_rssi, ni->ni_esslen);
+    if (ic->ic_state == IEEE80211_S_SCAN && fHalService->isFirmwareScanning()) {
+        /* A firmware scan is in flight.  Driving AUTH into a scanning radio
+         * makes the firmware reject the association time event, whose error
+         * path would restart the firmware.  Abort the scan instead: the
+         * abort completion runs ieee80211_end_scan, which selects the now
+         * des_essid-matching cached BSS and joins through the standard
+         * path - still sub-second, and entirely within the proven state
+         * machine. */
+        XYLog("join: firmware scan in flight, aborting to join cached BSS\n");
+        fHalService->requestScanAbort();
+        return true;
+    }
     /* SCAN/AUTH/ASSOC: join_bss drives the AUTH->AUTH transition directly.
      * RUN (network switch after deauth): force_reauth makes the state
      * machine send a fresh AUTH (RUN->AUTH "try to reauth" branch). */
@@ -1578,19 +1590,19 @@ void AirportItlwm::setScanRestriction(const struct apple80211_scan_data *sd)
     }
     ic->ic_scan_restricted = (valid > 0);
     if (ic->ic_scan_restricted) {
-        /* Clamp the requested dwell (ms) to a sane firmware range and
-         * convert to TU. */
+        /* Clamp the requested dwell (ms) to the firmware's 8-bit TU range
+         * and convert to TU. */
         uint32_t active_tu = sd->dwell_time ? (sd->dwell_time * 1000 / 1024) : 0;
         uint32_t passive_tu = active_tu;
         if (active_tu) {
             if (active_tu < 5)
                 active_tu = 5;
-            if (active_tu > 120)
-                active_tu = 120;
+            if (active_tu > 100)
+                active_tu = 100;
             if (passive_tu < 20)
                 passive_tu = 20;
-            if (passive_tu > 500)
-                passive_tu = 500;
+            if (passive_tu > 250)
+                passive_tu = 250;
             ic->ic_scan_dwell_active = active_tu;
             ic->ic_scan_dwell_passive = passive_tu;
         } else {
