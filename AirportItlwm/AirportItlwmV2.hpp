@@ -245,6 +245,10 @@ public:
     // request, so firmware scan completion is forwarded to macOS exactly
     // once per request and internal sweeps stay silent.
     bool scanReqPending;
+    // True when a directed request aborted an in-flight scan: the abort
+    // completion must NOT complete the request; the replacement
+    // (restricted) scan's completion is the one delivered to macOS.
+    bool scanAbortSkip;
     /*
      * Scan-result snapshot: macOS enumerates results via
      * APPLE80211_IOC_SCAN_RESULT well after the firmware scan that produced

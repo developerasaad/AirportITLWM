@@ -1077,8 +1077,12 @@ setSCAN_REQ(struct apple80211_scan_data *sd)
         // making airportd wait up to ~25s for results it asked to get
         // from specific channels.  An unrestricted request keeps the
         // in-flight scan (its completion already serves the request).
-        if (ic->ic_scan_restricted && instance->fHalService->isFirmwareScanning())
+        if (ic->ic_scan_restricted && instance->fHalService->isFirmwareScanning()) {
             instance->fHalService->requestScanAbort();
+            // The abort completion must not complete this request; the
+            // restricted replacement scan's completion is the deliverable.
+            instance->scanAbortSkip = true;
+        }
     }
     if (scanSource) {
         // Fallback only: posts exactly one scan-done if the real firmware

@@ -125,6 +125,15 @@ eventHandler(struct ieee80211com *ic, int msgCode, void *data)
             // so the enumeration macOS performs next reads a stable copy of
             // the node cache instead of a live tree that can be freed
             // mid-walk by cache clears or state transitions.
+            if (that->scanAbortSkip) {
+                // Completion of a scan aborted in favor of a directed
+                // request: refresh the snapshot but do not complete the
+                // request; the replacement (restricted) scan's completion
+                // is the one macOS is waiting for.
+                that->scanAbortSkip = false;
+                that->rebuildScanSnapshot();
+                break;
+            }
             if (that->scanReqPending) {
                 that->scanReqPending = false;
                 if (that->scanSource)
@@ -164,6 +173,7 @@ void AirportItlwm::fakeScanDone(OSObject *owner, IOTimerEventSource *sender)
     // the event handler cancels this timer when it wins the race.  The
     // snapshot is refreshed so enumeration reads a stable copy.
     that->scanReqPending = false;
+    that->scanAbortSkip = false;
     that->rebuildScanSnapshot();
     if (that->fNetIf)
         that->fNetIf->postMessage(APPLE80211_M_SCAN_DONE, &msg, 4, 0);
@@ -177,6 +187,7 @@ bool AirportItlwm::init(OSDictionary *properties)
     awdlSyncEnable = true;
     power_state = 0;
     scanReqPending = false;
+    scanAbortSkip = false;
     fScanSnapshot = (struct apple80211_scan_result *)IOMallocZero(
         kScanSnapshotMax * sizeof(struct apple80211_scan_result));
     fScanSnapshotCount = 0;
