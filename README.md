@@ -1,107 +1,62 @@
-# AirportItlwm — Dell G3 3579 (Intel Wireless-AC 9462)
+# AirportItlwm — AX211 / Sequoia Debug
 
-A hardware-focused engineering fork of **AirportItlwm.kext** — the native macOS
-Wi-Fi kernel extension for Intel wireless adapters — refined for the
-**Dell G3 3579** laptop with the **Intel Wireless-AC 9462** (CNVi, 9000-series,
-802.11ac / Wi-Fi 5, 1×1 radio) on **x86_64**.
+A single-target fork of [laobamac/itlwm](https://github.com/laobamac/itlwm)
+providing the native macOS AirportItlwm kernel extension for exactly one
+configuration:
 
-## Supported systems
+| Field | Value |
+|---|---|
+| Computer | MSI Modern 14 C12MO |
+| Wireless adapter | Intel Wi-Fi 6E AX211 160 MHz |
+| Operating system | macOS Sequoia 15.8.2 (Darwin 24.x) |
+| Architecture | x86_64 |
+| Driver | `AirportItlwm.kext` |
+| Configuration | Debug only |
+| Integration | Native macOS Wi-Fi (Airport / IO80211 / Skywalk / WCL) |
 
-| Build | macOS range | Notes |
-|---|---|---|
-| `AirportItlwm-Sonoma14.0` | 14.0 – 14.3 | Apple changed private IO80211 ABI in 14.4 |
-| `AirportItlwm-Sonoma14.4` | 14.4 – 14.x | |
-| `AirportItlwm-Sequoia` | 15.2 – 15.x (Darwin 24.2.0+) | 15.0/15.1 have no native support in any known source |
+No Sonoma, Tahoe, Ventura, HeliPort, Ethernet-emulation, or non-AX211 Intel
+adapter support is maintained.
 
-All builds are **x86_64 only**. The Sequoia build uses the WCL native Wi-Fi
-stack (IO80211Family V2 + IOSkywalk + AppleVTD bounce-buffer DMA).
+## Source foundation
 
-## Hardware path (this machine)
+Upstream: `https://github.com/laobamac/itlwm`
+Baseline commit: `7204c69d1bfa7f5cc0f7864e08fb03e55d0ec29e`
+("Merge pull request #36 from mingww64/fix/wpa3-transition-and-amsdu")
 
-- PCI IDs `8086:42a4 / 8086:00a0 / 8086:00a4 / 8086:02a0 / 8086:40a4`
-- Driver backend: `hal_iwm` (OpenBSD iwm port), `IWM_DEVICE_FAMILY_9000`
-- Firmware: `iwm-9000-46` (Intel `iwlwifi 9000-pu-b0-jf-b0-46`), embedded
-  (zlib-compressed) in the kext binary — no external firmware files needed.
-
-## Installation
-
-1. Pick the build matching your exact macOS version (see table above).
-2. Replace any existing `AirportItlwm.kext` in `EFI/OC/Kexts/` (or
-   `/Library/Extensions` for legacy boot loaders).
-3. Update your boot-loader kext list/Kernel cache if needed (OpenCore:
-   `Kernel → Add` entry must point at the new file; Legacy Kexts: rebuild
-   cache with `sudo kmutil install --update-all`).
-4. Reboot.
-
-**Debug vs Release:** Debug builds contain verbose diagnostic logging
-(`XYLog`) for investigating issues. Use Release for daily use.
-
-## Rollback
-
-Restore your previous `AirportItlwm.kext` (keep a copy before installing) and
-rebuild the kernel cache. The driver does not modify your EFI beyond the kext
-file itself.
-
-## Collecting diagnostics
-
-If a build misbehaves, run on the target machine:
-
-```sh
-bash scripts/collect-diagnostics.sh [seconds_of_recent_logs]
-```
-
-It writes a tarball to your Desktop with driver-relevant logs, kext load
-state, and sleep/wake timeline — attach it to the matching GitHub issue.
+The previous Dell G3 3579 / Intel AC 9462 experiment that physically failed
+on its target is preserved as the recoverable reference
+`archive/dell-ac9462-v2.5.0-alpha` (tag `dell-ac9462-v2.5.0-alpha-final`,
+commit `812ea1c`). It is not under active development.
 
 ## Build
 
-CI (GitHub Actions, `macos-15-intel` runner) builds and verifies every push:
-Sonoma14.0/Sonoma14.4/Sequoia × Debug/Release, checking architecture, bundle
-identity, OSBundleLibraries, embedded firmware inventory, and publishing
-SHA-256-verified pre-release zips.
+Manual GitHub Actions workflow only:
+**Actions → "Build AX211 Sequoia Debug" → Run workflow** on `main`.
+Runner: `macos-15-intel`. MacKernelSDK is pinned at
+`3f750085caa17ec3a7880f11c11bf4f48cd6a164`.
 
-Local build requires Xcode and MacKernelSDK at commit `3f75008`:
+Local build (Xcode + Python 3, MacKernelSDK checked out in `MacKernelSDK/`):
 
 ```sh
 xcodebuild -project itlwm.xcodeproj -scheme AirportItlwm-Sequoia \
-  -configuration Release ARCHS=x86_64 CODE_SIGNING_ALLOWED=NO build
+  -configuration Debug ARCHS=x86_64 CODE_SIGNING_ALLOWED=NO \
+  SYMROOT="$PWD/build/products" OBJROOT="$PWD/build/obj" build
 ```
 
-## Provenance and licensing
-
-- Baseline: [laobamac/itlwm](https://github.com/laobamac/itlwm) main @ `7204c69`
-  — a strict superset of [OpenIntelWireless/itlwm](https://github.com/OpenIntelWireless/itlwm)
-  master @ `53c51c2` (+47 commits) adding native Sequoia 15.2+ support and
-  correctness fixes. Full upstream git history is preserved in this repository.
-- Upstream credits and license terms apply (see `LICENSE`,
-  `iwlwifi-firmware-license/`). Based on the OpenBSD `iwm` driver
-  (OpenBSD), Linux `iwlwifi` references, and the original AirportItlwm
-  work by zxystd and OpenIntelWireless contributors; MacKernelSDK by
-  acidanthera; WCL/Sequoia+Tahoe support by laobamac.
-- Intel firmware is redistributed under the terms documented in
-  `iwlwifi-firmware-license/`.
+Output: `build/products/Debug/Sequoia/AirportItlwm.kext`.
 
 ## Status
 
-Engineering is active on this repository. **`v2.4.0-alpha` FAILED physical
-validation on the target machine** (see issues #3–#6 post-mortems); the
-current development build is **`v2.5.0-alpha`**, a reassessed re-engineering
-of the join/scan lifecycles with physical-testing instrumentation:
+- **Baseline (this commit):** clean, unmodified laobamac upstream Sequoia
+  Debug build. CI-verified (architecture, bundle identity, Sequoia Skywalk /
+  corecapture linkage, AX211 PCI device matching, embedded Gen3 firmware).
+- **Hardware validation:** PENDING on the MSI target. Not yet physically
+  tested. Do not assume Wi-Fi works until the baseline is confirmed on the
+  MSI.
+- **Source reduction:** NOT STARTED. Per project policy, destructive pruning
+  is blocked until the upstream baseline is hardware-validated on the MSI.
 
-- **Join fast path** — association to the cached scan target within
-  airportd's join window, instead of waiting ~25 s for a full-band
-  firmware scan (the actual cause of the wrong-password/retry loop).
-- **Directed scans** — Apple80211 scan requests' channel subsets and dwell
-  are honored (~1–5 s), instead of ~25 s full-band sweeps that always
-  exceeded airportd's ~10 s request window.
-- **Snapshot enumeration** — scan results are served from a stable copy
-  converted under the command gate, removing the dangling live-tree cursor.
-- **Security** — key material (PTK/GTK/PMK) and full EAPOL frames no longer
-  reach the kernel log.
-- **Diagnostics** — join/scan/link lifecycle lines for classifying physical
-  failures (`log show --predicate 'eventMessage CONTAINS "itlwm"'`).
+## License
 
-Defect tracking: issues #3–#6 (reassessed), #8 (spontaneous link-loss,
-instrumented), overall state in issue #7. Development pre-releases carry the
-`-alpha-<commit>` suffix; nothing is marked stable without physical
-confirmation on the target machine.
+Upstream `LICENSE` (BSD-2-Clause) and `iwlwifi-firmware-license` are retained
+unchanged. Copyright and source provenance are preserved.

@@ -22,9 +22,6 @@ OSDefineMetaClassAndStructors(CTimeout, OSObject)
 IO80211WorkQueue *_fWorkloop;
 IOCommandGate *_fCommandGate;
 
-// Maximum number of scan results served in one enumeration snapshot.
-#define kScanSnapshotMax 96
-
 void AirportItlwm::releaseAll()
 {
 #ifdef AIRPORT_WCL
@@ -57,12 +54,6 @@ void AirportItlwm::releaseAll()
     if (fHalService) {
         fHalService->release();
         fHalService = NULL;
-    }
-    if (fScanSnapshot) {
-        IOFree(fScanSnapshot, kScanSnapshotMax * sizeof(struct apple80211_scan_result));
-        fScanSnapshot = NULL;
-        fScanSnapshotCount = 0;
-        fScanSnapshotIndex = 0;
     }
     if (_fWorkloop) {
         if (_fCommandGate) {
@@ -116,32 +107,6 @@ eventHandler(struct ieee80211com *ic, int msgCode, void *data)
         case IEEE80211_EVT_STA_DEAUTH:
             interface->postMessage(APPLE80211_M_DEAUTH_RECEIVED, NULL, 0, 0);
             break;
-        case IEEE80211_EVT_SCAN_DONE:
-            // Real firmware scan completion (posted from ieee80211_end_scan on
-            // the workloop).  Forward it to macOS only when airportd has an
-            // outstanding scan request; each request is completed exactly
-            // once by either this event or the fallback timer, whichever
-            // arrives first.  The result snapshot is rebuilt before posting
-            // so the enumeration macOS performs next reads a stable copy of
-            // the node cache instead of a live tree that can be freed
-            // mid-walk by cache clears or state transitions.
-            if (that->scanAbortSkip) {
-                // Completion of a scan aborted in favor of a directed
-                // request: refresh the snapshot but do not complete the
-                // request; the replacement (restricted) scan's completion
-                // is the one macOS is waiting for.
-                that->scanAbortSkip = false;
-                that->rebuildScanSnapshot();
-                break;
-            }
-            if (that->scanReqPending) {
-                that->scanReqPending = false;
-                if (that->scanSource)
-                    that->scanSource->cancelTimeout();
-                that->rebuildScanSnapshot();
-                interface->postMessage(APPLE80211_M_SCAN_DONE, NULL, 0, 0);
-            }
-            break;
         default:
             break;
     }
@@ -166,17 +131,7 @@ void AirportItlwm::fakeScanDone(OSObject *owner, IOTimerEventSource *sender)
     if (that->fNetIf)
         static_cast<AirportItlwmSkywalkInterface *>(that->fNetIf)->completeWCLScan();
 #else
-    // Timer fired: either the FAST/PASSIVE quick path (macOS wants the
-    // cached results immediately) or the fallback for an ACTIVE scan
-    // whose real completion event did not arrive in time (firmware error
-    // or device restart).  Both post exactly one scan-done per request;
-    // the event handler cancels this timer when it wins the race.  The
-    // snapshot is refreshed so enumeration reads a stable copy.
-    that->scanReqPending = false;
-    that->scanAbortSkip = false;
-    that->rebuildScanSnapshot();
-    if (that->fNetIf)
-        that->fNetIf->postMessage(APPLE80211_M_SCAN_DONE, &msg, 4, 0);
+    that->fNetIf->postMessage(APPLE80211_M_SCAN_DONE, &msg, 4, 0);
 #endif
 }
 
@@ -186,12 +141,6 @@ bool AirportItlwm::init(OSDictionary *properties)
     bool ret = super::init(properties);
     awdlSyncEnable = true;
     power_state = 0;
-    scanReqPending = false;
-    scanAbortSkip = false;
-    fScanSnapshot = (struct apple80211_scan_result *)IOMallocZero(
-        kScanSnapshotMax * sizeof(struct apple80211_scan_result));
-    fScanSnapshotCount = 0;
-    fScanSnapshotIndex = 0;
     memset(geo_location_cc, 0, sizeof(geo_location_cc));
     return ret;
 }
@@ -858,10 +807,10 @@ UInt32 AirportItlwm::outputPacket(mbuf_t m, void *param)
     size_t len = mbuf_len(m);
     ether_header_t *eh = (ether_header_t *)mbuf_data(m);
     if (len >= sizeof(ether_header_t) && eh->ether_type == htons(ETHERTYPE_PAE)) { // EAPOL packet
-        /* EAPOL-Key frames carry key material (ANonce, SNonce, MIC, GTK in
-         * msg 3 of the 4-way handshake); the payload must never be logged.
-         * Log only the length so handshake progress remains diagnosable. */
-        XYLog("output EAPOL packet, len: %zu\n", len);
+        const char* dump = hexdump((uint8_t*)mbuf_data(m), len);
+        XYLog("output EAPOL packet, len: %zu, data: %s\n", len, dump ? dump : "Failed to allocate memory");
+        if (dump)
+            IOFree((void*)dump, 3 * len + 1);
     }
     if (!ifp->if_snd.queue->lockEnqueue(m)) {
         freePacket(m);
@@ -1434,197 +1383,4 @@ void AirportItlwm::setPowerStateOn()
     XYLog("%s\n", __FUNCTION__);
     pmPowerState = kPowerStateOn;
     pmPolicyMaker->acknowledgeSetPowerState();
-}
-
-// ---------------------------------------------------------------------------
-// Shared join / scan-request lifecycle (Skywalk paths; WCL keeps its own
-// request machinery but the helpers are harmless there)
-// ---------------------------------------------------------------------------
-
-static int airportChanFlag2appleScanFlag(int flags)
-{
-    int appleFlags = APPLE80211_C_FLAG_20MHZ;
-    if (flags & IEEE80211_CHAN_2GHZ)
-        appleFlags |= APPLE80211_C_FLAG_2GHZ;
-    if (flags & IEEE80211_CHAN_5GHZ)
-        appleFlags |= APPLE80211_C_FLAG_5GHZ;
-    if (!(flags & IEEE80211_CHAN_PASSIVE))
-        appleFlags |= APPLE80211_C_FLAG_ACTIVE;
-    if (flags & IEEE80211_CHAN_DFS)
-        appleFlags |= APPLE80211_C_FLAG_DFS;
-    return appleFlags;
-}
-
-/*
- * Convert one net80211 node into the Apple80211 scan-result form.  Runs
- * on the command gate while building the snapshot; the resulting copy is
- * stable even after the node is freed by cache clears or state changes.
- */
-static void airportFillScanResultFromNode(ItlHalService *fHalService,
-                                          struct ieee80211_node *ni,
-                                          struct apple80211_scan_result *result)
-{
-    struct ieee80211com *ic = fHalService->get80211Controller();
-    bzero(result, sizeof(*result));
-    result->version = APPLE80211_VERSION;
-    if (ni->ni_rsnie_tlv && ni->ni_rsnie_tlv_len > 0) {
-        result->asr_ie_len = ni->ni_rsnie_tlv_len;
-        memcpy(result->asr_ie_data, ni->ni_rsnie_tlv,
-               MIN(result->asr_ie_len, sizeof(result->asr_ie_data)));
-    } else {
-        result->asr_ie_len = 0;
-    }
-    result->asr_beacon_int = ni->ni_intval;
-    result->asr_nrates = ni->ni_rates.rs_nrates;
-    for (unsigned i = 0;
-         i < result->asr_nrates &&
-         i < (sizeof(result->asr_rates) / sizeof(result->asr_rates[0])); i++)
-        result->asr_rates[i] = ni->ni_rates.rs_rates[i];
-    result->asr_age = (uint32_t)(airport_up_time() - ni->ni_age_ts);
-    result->asr_cap = ni->ni_capinfo;
-    result->asr_channel.version = APPLE80211_VERSION;
-    result->asr_channel.channel = ieee80211_chan2ieee(ic, ni->ni_chan);
-    result->asr_channel.flags = airportChanFlag2appleScanFlag(ni->ni_chan->ic_flags);
-    result->asr_noise = -fHalService->getDriverInfo()->getBSSNoise();
-    result->asr_rssi = -(0 - IWM_MIN_DBM - ni->ni_rssi);
-    memcpy(result->asr_bssid, ni->ni_bssid, IEEE80211_ADDR_LEN);
-    result->asr_ssid_len = ni->ni_esslen;
-    if (result->asr_ssid_len != 0)
-        memcpy(result->asr_ssid, ni->ni_essid,
-               MIN(result->asr_ssid_len, sizeof(result->asr_ssid)));
-}
-
-/* Command-gate action: rebuild the scan result snapshot from the node
- * tree into stable storage. */
-IOReturn AirportItlwm::snapshotAction(OSObject *owner, void *arg0, void *, void *, void *)
-{
-    AirportItlwm *that = OSDynamicCast(AirportItlwm, owner);
-    if (!that || !that->fHalService || !that->fScanSnapshot)
-        return kIOReturnError;
-    struct ieee80211com *ic = that->fHalService->get80211Controller();
-    struct ieee80211_node *ni;
-    uint32_t count = 0;
-    
-    RB_FOREACH(ni, ieee80211_tree, &ic->ic_tree) {
-        if (count >= kScanSnapshotMax)
-            break;
-        airportFillScanResultFromNode(that->fHalService, ni,
-                                      &that->fScanSnapshot[count]);
-        count++;
-    }
-    that->fScanSnapshotCount = count;
-    that->fScanSnapshotIndex = 0;
-    return kIOReturnSuccess;
-}
-
-void AirportItlwm::rebuildScanSnapshot()
-{
-    if (fScanSnapshot == NULL)
-        return;
-    if (_fCommandGate)
-        _fCommandGate->runAction(&AirportItlwm::snapshotAction);
-    else
-        snapshotAction(this, NULL, NULL, NULL, NULL);
-}
-
-/*
- * Fast-join: after macOS has issued a join (des_essid/des_bssid/PSK are
- * set), associate directly to the best cached BSS instead of waiting for
- * the next full-band firmware scan.  macOS always scans right before the
- * user picks a network, so the target is normally cached and fresh.  The
- * ~25s full-scan wait is what exceeded airportd's ~10s per-attempt join
- * timeout and produced the "connect spinner, timeout, password re-prompt"
- * loop (defect A).
- *
- * Returns true when the association state machine was kicked directly.
- */
-bool AirportItlwm::attemptFastJoin()
-{
-    if (!fHalService)
-        return false;
-    struct ieee80211com *ic = fHalService->get80211Controller();
-    struct ieee80211_node *ni = ieee80211_find_join_target(ic);
-    
-    if (ni == NULL) {
-        XYLog("join: no cached BSS for target ESSID (len=%d), scanning\n",
-              ic->ic_des_esslen);
-        return false;
-    }
-    XYLog("join: fast-path BSSID=%s chan=%d rssi=%d esslen=%d\n",
-          ether_sprintf(ni->ni_bssid),
-          ieee80211_chan2ieee(ic, ni->ni_chan),
-          ni->ni_rssi, ni->ni_esslen);
-    if (ic->ic_state == IEEE80211_S_SCAN && fHalService->isFirmwareScanning()) {
-        /* A firmware scan is in flight.  Driving AUTH into a scanning radio
-         * makes the firmware reject the association time event, whose error
-         * path would restart the firmware.  Abort the scan instead: the
-         * abort completion runs ieee80211_end_scan, which selects the now
-         * des_essid-matching cached BSS and joins through the standard
-         * path - still sub-second, and entirely within the proven state
-         * machine. */
-        XYLog("join: firmware scan in flight, aborting to join cached BSS\n");
-        fHalService->requestScanAbort();
-        return true;
-    }
-    /* SCAN/AUTH/ASSOC: join_bss drives the AUTH->AUTH transition directly.
-     * RUN (network switch after deauth): force_reauth makes the state
-     * machine send a fresh AUTH (RUN->AUTH "try to reauth" branch). */
-    ieee80211_node_join_bss(ic, ni,
-                            ic->ic_state == IEEE80211_S_RUN ? 1 : 0);
-    return true;
-}
-
-/*
- * Translate an Apple80211 scan request's channel subset and dwell time
- * into the one-shot firmware scan restriction consumed by the next scan
- * command the HAL builds.  Dwell time arrives in milliseconds; the
- * firmware request takes TUs (1024us).  Restricted directed scans run in
- * ~1-5s instead of the ~25s full-band sweep so airportd's ~10s per-channel
- * subset scan window is finally satisfiable (defects B, C).
- */
-void AirportItlwm::setScanRestriction(const struct apple80211_scan_data *sd)
-{
-    if (!fHalService || !sd)
-        return;
-    struct ieee80211com *ic = fHalService->get80211Controller();
-    uint32_t valid = 0;
-    
-    memset(ic->ic_scan_channels, 0, sizeof(ic->ic_scan_channels));
-    if (sd->num_channels > 0 && sd->num_channels <= APPLE80211_MAX_CHANNELS) {
-        for (uint32_t i = 0; i < sd->num_channels; i++) {
-            uint32_t channel = sd->channels[i].channel;
-            if (channel == 0 || channel >= 256)
-                continue;
-            ic->ic_scan_channels[channel / 8] |= (1U << (channel % 8));
-            valid++;
-        }
-    }
-    ic->ic_scan_restricted = (valid > 0);
-    if (ic->ic_scan_restricted) {
-        /* Clamp the requested dwell (ms) to the firmware's 8-bit TU range
-         * and convert to TU. */
-        uint32_t active_tu = sd->dwell_time ? (sd->dwell_time * 1000 / 1024) : 0;
-        uint32_t passive_tu = active_tu;
-        if (active_tu) {
-            if (active_tu < 5)
-                active_tu = 5;
-            if (active_tu > 100)
-                active_tu = 100;
-            if (passive_tu < 20)
-                passive_tu = 20;
-            if (passive_tu > 250)
-                passive_tu = 250;
-            ic->ic_scan_dwell_active = active_tu;
-            ic->ic_scan_dwell_passive = passive_tu;
-        } else {
-            ic->ic_scan_dwell_active = 0;
-            ic->ic_scan_dwell_passive = 0;
-        }
-    } else {
-        ic->ic_scan_dwell_active = 0;
-        ic->ic_scan_dwell_passive = 0;
-    }
-    XYLog("scan(req): type=%u channels=%u valid=%u dwell_ms=%u active_tu=%u passive_tu=%u\n",
-          sd->scan_type, sd->num_channels, valid, sd->dwell_time,
-          ic->ic_scan_dwell_active, ic->ic_scan_dwell_passive);
 }

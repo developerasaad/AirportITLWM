@@ -162,47 +162,9 @@ iwm_scan_rate_n_flags(struct iwm_softc *sc, int flags, int no_cck)
         return htole32(IWL_RATE_6M_PLCP | tx_ant);
 }
 
-/*
- * Consume the one-shot scan restriction for the firmware scan command
- * currently being built.  The Apple80211/WCL scan request deposits a
- * channel bitmap (and dwell) before kicking a scan; taking it here makes
- * the restriction apply to exactly ONE firmware scan so that internally
- * triggered follow-up scans (perpetual rescan loop, background roam
- * scans) return to the full channel set.
- */
-static void
-iwm_scan_take_restriction(struct iwm_softc *sc, uint8_t out_channels[32],
-                           bool *out_restricted, uint32_t *out_dwell_active,
-                           uint32_t *out_dwell_passive)
-{
-    struct ieee80211com *ic = &sc->sc_ic;
-    int s = splnet();
-    *out_restricted = ic->ic_scan_restricted;
-    if (ic->ic_scan_restricted) {
-        memcpy(out_channels, ic->ic_scan_channels, sizeof(ic->ic_scan_channels));
-        ic->ic_scan_restricted = false; /* one-shot */
-    } else {
-        memset(out_channels, 0, sizeof(out_channels));
-    }
-    *out_dwell_active = ic->ic_scan_dwell_active;
-    *out_dwell_passive = ic->ic_scan_dwell_passive;
-    ic->ic_scan_dwell_active = 0;
-    ic->ic_scan_dwell_passive = 0;
-    splx(s);
-}
-
-/* Channel-bitmap test shared by the legacy ioctl path and WCL. */
-static bool
-iwm_scan_channel_selected(const uint8_t *channels, bool restricted, unsigned channel)
-{
-    return !restricted ||
-        (channel < 256 && (channels[channel / 8] & (1U << (channel % 8))));
-}
-
 uint8_t ItlIwm::
 iwm_lmac_scan_fill_channels(struct iwm_softc *sc,
-                            struct iwm_scan_channel_cfg_lmac *chan, int n_ssids, int bgscan,
-                            const uint8_t *restrict_channels, bool restricted)
+                            struct iwm_scan_channel_cfg_lmac *chan, int n_ssids, int bgscan)
 {
     struct ieee80211com *ic = &sc->sc_ic;
     struct ieee80211_channel *c;
@@ -214,9 +176,12 @@ iwm_lmac_scan_fill_channels(struct iwm_softc *sc,
          c++) {
         if (c->ic_flags == 0)
             continue;
-        if (!iwm_scan_channel_selected(restrict_channels, restricted,
+#ifdef AIRPORT_WCL
+        if (!AirportWCL::scanChannelSelected(ic->ic_wcl_scan_channels,
+                ic->ic_wcl_scan_requested && ic->ic_wcl_scan_restricted,
                 ieee80211_chan2ieee(ic, c)))
             continue;
+#endif
         
         chan->channel_num = htole16(ieee80211_mhz2ieee(c->ic_freq, 0));
         chan->iter_count = htole16(1);
@@ -238,8 +203,7 @@ iwm_lmac_scan_fill_channels(struct iwm_softc *sc,
 
 uint8_t ItlIwm::
 iwm_umac_scan_fill_channels(struct iwm_softc *sc,
-                            struct iwm_scan_channel_cfg_umac *chan, int n_ssids, int bgscan,
-                            const uint8_t *restrict_channels, bool restricted)
+                            struct iwm_scan_channel_cfg_umac *chan, int n_ssids, int bgscan)
 {
     struct ieee80211com *ic = &sc->sc_ic;
     struct ieee80211_channel *c;
@@ -251,9 +215,12 @@ iwm_umac_scan_fill_channels(struct iwm_softc *sc,
          c++) {
         if (c->ic_flags == 0)
             continue;
-        if (!iwm_scan_channel_selected(restrict_channels, restricted,
+#ifdef AIRPORT_WCL
+        if (!AirportWCL::scanChannelSelected(ic->ic_wcl_scan_channels,
+                ic->ic_wcl_scan_requested && ic->ic_wcl_scan_restricted,
                 ieee80211_chan2ieee(ic, c)))
             continue;
+#endif
         
         chan->channel_num = ieee80211_mhz2ieee(c->ic_freq, 0);
         chan->iter_count = 1;
@@ -399,9 +366,6 @@ iwm_lmac_scan(struct iwm_softc *sc, int bgscan)
     int scanSSIDLength = ic->ic_des_esslen;
     const uint8_t *scanSSID = ic->ic_des_essid;
     bool scanActive = scanSSIDLength != 0;
-    uint8_t restrict_channels[32];
-    bool restricted;
-    uint32_t dwell_active_tu = 0, dwell_passive_tu = 0;
 #ifdef AIRPORT_WCL
     scanActive = AirportWCL::scanUsesProbes(ic->ic_wcl_scan_requested,
         ic->ic_wcl_scan_active);
@@ -426,9 +390,6 @@ iwm_lmac_scan(struct iwm_softc *sc, int bgscan)
         isset(sc->sc_ucode_api, IWM_UCODE_TLV_API_FRAGMENTED_SCAN));
 #endif
     
-    iwm_scan_take_restriction(sc, restrict_channels, &restricted,
-                              &dwell_active_tu, &dwell_passive_tu);
-    
     req_len = sizeof(struct iwm_scan_req_lmac) +
     (sizeof(struct iwm_scan_channel_cfg_lmac) *
      sc->sc_capa_n_scan_channels) + sizeof(struct iwm_scan_probe_req_v1);
@@ -448,10 +409,6 @@ iwm_lmac_scan(struct iwm_softc *sc, int bgscan)
     req->passive_dwell = 110;
     req->fragmented_dwell = 44;
     req->extended_dwell = 90;
-    if (dwell_active_tu)
-        req->active_dwell = (uint16_t)dwell_active_tu;
-    if (dwell_passive_tu)
-        req->passive_dwell = (uint16_t)dwell_passive_tu;
     if (bgscan) {
         req->max_out_time = htole32(120);
         req->suspend_time = htole32(120);
@@ -520,11 +477,7 @@ iwm_lmac_scan(struct iwm_softc *sc, int bgscan)
     
     req->n_channels = iwm_lmac_scan_fill_channels(sc,
                                                   (struct iwm_scan_channel_cfg_lmac *)req->data,
-                                                  scanActive, bgscan,
-                                                  restrict_channels, restricted);
-    XYLog("scan(lmac): bgscan=%d restricted=%d nchan=%d dwell_active=%d dwell_passive=%d essid_len=%d\n",
-          bgscan, restricted, req->n_channels, req->active_dwell,
-          req->passive_dwell, scanSSIDLength);
+                                                  scanActive, bgscan);
     
     preq = (struct iwm_scan_probe_req_v1 *)(req->data +
                                             (sizeof(struct iwm_scan_channel_cfg_lmac) *
@@ -707,16 +660,10 @@ iwm_umac_scan(struct iwm_softc *sc, int bgscan)
     struct iwm_scan_umac_chan_param *chanparam;
     size_t req_len;
     int err, async = bgscan;
-    uint8_t restrict_channels[32];
-    bool restricted;
-    uint32_t dwell_active_tu = 0, dwell_passive_tu = 0;
 #ifdef AIRPORT_WCL
     const auto timing = AirportWCL::scanTiming(ic->ic_wcl_scan_away_time_ms, bgscan,
         isset(sc->sc_ucode_api, IWM_UCODE_TLV_API_FRAGMENTED_SCAN));
 #endif
-    
-    iwm_scan_take_restriction(sc, restrict_channels, &restricted,
-                              &dwell_active_tu, &dwell_passive_tu);
     
     req_len = iwm_umac_scan_size(sc);
     if ((req_len < IWM_SCAN_REQ_UMAC_SIZE_V1 +
@@ -753,18 +700,10 @@ iwm_umac_scan(struct iwm_softc *sc, int bgscan)
                   IWM_UCODE_TLV_API_ADAPTIVE_DWELL_V2)) {
             req->v8.active_dwell[IWM_SCAN_LB_LMAC_IDX] = 10;
             req->v8.passive_dwell[IWM_SCAN_LB_LMAC_IDX] = 110;
-            if (dwell_active_tu)
-                req->v8.active_dwell[IWM_SCAN_LB_LMAC_IDX] = (uint16_t)dwell_active_tu;
-            if (dwell_passive_tu)
-                req->v8.passive_dwell[IWM_SCAN_LB_LMAC_IDX] = (uint16_t)dwell_passive_tu;
         } else {
             req->v7.active_dwell = 10;
             req->v7.passive_dwell = 110;
             req->v7.fragmented_dwell = 44;
-            if (dwell_active_tu)
-                req->v7.active_dwell = (uint16_t)dwell_active_tu;
-            if (dwell_passive_tu)
-                req->v7.passive_dwell = (uint16_t)dwell_passive_tu;
         }
     } else {
         /* These timings correspond to iwlwifi's UNASSOC scan. */
@@ -772,10 +711,6 @@ iwm_umac_scan(struct iwm_softc *sc, int bgscan)
         req->v1.passive_dwell = 110;
         req->v1.fragmented_dwell = 44;
         req->v1.extended_dwell = 90;
-        if (dwell_active_tu)
-            req->v1.active_dwell = (uint16_t)dwell_active_tu;
-        if (dwell_passive_tu)
-            req->v1.passive_dwell = (uint16_t)dwell_passive_tu;
 
         req->v1.scan_priority = htole32(IWM_SCAN_PRIORITY_HIGH);
     }
@@ -808,12 +743,8 @@ iwm_umac_scan(struct iwm_softc *sc, int bgscan)
     chanparam = iwm_get_scan_req_umac_chan_param(sc, req);
     chanparam->count = iwm_umac_scan_fill_channels(sc,
                                                    (struct iwm_scan_channel_cfg_umac *)cmd_data,
-                                                   scanActive, bgscan,
-                                                   restrict_channels, restricted);
+                                                   scanActive, bgscan);
     chanparam->flags = 0;
-    XYLog("scan(umac): bgscan=%d restricted=%d nchan=%d dwell_active=%u dwell_passive=%u essid_len=%d\n",
-          bgscan, restricted, chanparam->count, dwell_active_tu,
-          dwell_passive_tu, scanSSIDLength);
     
     tail_data = (uint8_t*)cmd_data + sizeof(struct iwm_scan_channel_cfg_umac) *
     sc->sc_capa_n_scan_channels;
@@ -1067,15 +998,8 @@ iwm_bgscan(struct ieee80211com *ic)
     ItlIwm *that = container_of(sc, ItlIwm, com);
     int err;
     
-    if (sc->sc_flags & IWM_FLAG_SCANNING) {
-        // A firmware scan is already in flight (e.g. the perpetual rescan
-        // loop while disconnected, or a racing foreground scan).  Logging
-        // makes the skip diagnosable instead of silently dropping the
-        // background scan request.
-        XYLog("%s: scan already in progress, background scan skipped\n",
-              __FUNCTION__);
+    if (sc->sc_flags & IWM_FLAG_SCANNING)
         return 0;
-    }
     
     if (isset(sc->sc_enabled_capa, IWM_UCODE_TLV_CAPA_UMAC_SCAN))
         err = that->iwm_umac_scan(sc, 1);
@@ -1140,31 +1064,4 @@ iwm_scan_abort(struct iwm_softc *sc)
     if (err == 0)
         sc->sc_flags &= ~(IWM_FLAG_SCANNING | IWM_FLAG_BGSCAN);
     return err;
-}
-
-/* Task body: abort an in-flight firmware scan from the HAL task queue.
- * The abort completion notification drives iwm_endscan() -> end_scan(),
- * which (disassociated) restarts the scan loop; the replacement scan picks
- * up any channel restriction deposited by an Apple80211 scan request. */
-void ItlIwm::
-iwm_scan_abort_task(void *psc)
-{
-    struct iwm_softc *sc = (struct iwm_softc *)psc;
-    ItlIwm *that = container_of(sc, ItlIwm, com);
-    int err;
-    
-    if ((sc->sc_flags & IWM_FLAG_SHUTDOWN) == 0 &&
-        (sc->sc_flags & IWM_FLAG_SCANNING)) {
-        err = that->iwm_scan_abort(sc);
-        XYLog("%s: scan abort requested, err=%d\n", __FUNCTION__, err);
-    }
-}
-
-/* Command-gate entry: queue the abort on the HAL task queue instead of
- * issuing firmware commands from the caller's thread. */
-void ItlIwm::
-requestScanAbort()
-{
-    struct iwm_softc *sc = &com;
-    iwm_add_task(sc, systq, &sc->scan_abort_task);
 }

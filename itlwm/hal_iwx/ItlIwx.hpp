@@ -150,10 +150,6 @@ public:
     void free() override;
     virtual bool attach(IOPCIDevice *device) override;
     virtual void detach(IOPCIDevice *device) override;
-    /* Abort an in-flight firmware scan in favor of a directed Apple80211
-     * scan request; the abort runs as a queued HAL task. */
-    void requestScanAbort() override;
-    bool isFirmwareScanning() override { return com.sc_flags & IWX_FLAG_SCANNING; }
     IOReturn enable(IONetworkInterface *netif) override;
     IOReturn disable(IONetworkInterface *netif) override;
     virtual struct ieee80211com *get80211Controller() override;
@@ -446,7 +442,6 @@ public:
            struct ieee80211_node *, struct ieee80211_key *);
     int    iwx_media_change(struct _ifnet *);
     static void    iwx_newstate_task(void *);
-    static void    iwx_scan_abort_task(void *);
     static int    iwx_newstate(struct ieee80211com *, enum ieee80211_state, int);
     void    iwx_endscan(struct iwx_softc *);
     void    iwx_fill_sf_command(struct iwx_softc *, struct iwx_sf_cfg_cmd *,

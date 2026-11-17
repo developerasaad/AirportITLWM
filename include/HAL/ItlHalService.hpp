@@ -49,14 +49,6 @@ public:
 #ifdef AIRPORT_WCL
     virtual IOReturn setScanHomeAwayTime(uint32_t) { return kIOReturnUnsupported; }
 #endif
-    /* Abort an in-flight firmware scan in favor of a directed scan request.
-     * Default: unsupported (driver HALs implement where the firmware
-     * supports scan abort).  Runs the abort as a queued task. */
-    virtual void requestScanAbort() {}
-    /* True while a firmware scan command is in flight.  The join fast path
-     * must not drive AUTH into a scanning radio (the firmware would reject
-     * the time event and the error path would restart the firmware). */
-    virtual bool isFirmwareScanning() { return false; }
     
     virtual ItlDriverInfo *getDriverInfo() = 0;
     

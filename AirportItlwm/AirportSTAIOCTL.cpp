@@ -221,18 +221,11 @@ getSSID(OSObject *object,
     if (ic->ic_state == IEEE80211_S_RUN) {
         memset(sd, 0, sizeof(*sd));
         sd->version = APPLE80211_VERSION;
-        /* Report the actual associated BSS ESSID with its explicit length
-         * (never strlen on a byte array). */
-        if (ic->ic_bss != NULL) {
-            sd->ssid_len = MIN(ic->ic_bss->ni_esslen, sizeof(sd->ssid_bytes));
-            memcpy(sd->ssid_bytes, ic->ic_bss->ni_essid, sd->ssid_len);
-        }
+        memcpy(sd->ssid_bytes, ic->ic_des_essid, strlen((const char*)ic->ic_des_essid));
+        sd->ssid_len = (uint32_t)strlen((const char*)ic->ic_des_essid);
         return kIOReturnSuccess;
     }
-    /* Disassociated: success with empty SSID. */
-    memset(sd, 0, sizeof(*sd));
-    sd->version = APPLE80211_VERSION;
-    return kIOReturnSuccess;
+    return 6;
 }
 
 IOReturn AirportItlwm::
@@ -262,15 +255,26 @@ IOReturn AirportItlwm::
 setCIPHER_KEY(OSObject *object, struct apple80211_key *key)
 {
     XYLog("%s\n", __FUNCTION__);
+    const char* keydump = hexdump(key->key, key->key_len);
+    const char* rscdump = hexdump(key->key_rsc, key->key_rsc_len);
+    const char* eadump = hexdump(key->key_ea.octet, APPLE80211_ADDR_LEN);
     static_assert(__offsetof(struct apple80211_key, key_ea) == 92, "struct corrupted");
     static_assert(__offsetof(struct apple80211_key, key_rsc_len) == 80, "struct corrupted");
     static_assert(__offsetof(struct apple80211_key, wowl_kck_len) == 100, "struct corrupted");
     static_assert(__offsetof(struct apple80211_key, wowl_kek_len) == 120, "struct corrupted");
     static_assert(__offsetof(struct apple80211_key, wowl_kck_key) == 104, "struct corrupted");
-    /* Key material (PTK/GTK/PMK) must never reach the log. */
-    XYLog("Set key request: len=%d cipher_type=%d flags=%d index=%d rsc_len=%d\n",
-          key->key_len, key->key_cipher_type, key->key_flags, key->key_index,
-          key->key_rsc_len);
+    if (keydump && rscdump && eadump)
+        XYLog("Set key request: len=%d cipher_type=%d flags=%d index=%d key=%s rsc_len=%d rsc=%s ea=%s\n",
+              key->key_len, key->key_cipher_type, key->key_flags, key->key_index, keydump, key->key_rsc_len, rscdump, eadump);
+    else
+        XYLog("Set key request, but failed to allocate memory for hexdump\n");
+    
+    if (keydump)
+        IOFree((void*)keydump, 3 * key->key_len + 1);
+    if (rscdump)
+        IOFree((void*)rscdump, 3 * key->key_rsc_len + 1);
+    if (eadump)
+        IOFree((void*)eadump, 3 * APPLE80211_ADDR_LEN + 1);
     
     switch (key->key_cipher_type) {
         case APPLE80211_CIPHER_NONE:
@@ -649,10 +653,7 @@ getBSSID(OSObject *object,
         memcpy(bd->bssid.octet, ic->ic_bss->ni_bssid, APPLE80211_ADDR_LEN);
         return kIOReturnSuccess;
     }
-    /* Disassociated: success with a zero BSSID. */
-    memset(bd, 0, sizeof(*bd));
-    bd->version = APPLE80211_VERSION;
-    return kIOReturnSuccess;
+    return 6;
 }
 
 IOReturn AirportItlwm::
@@ -1040,31 +1041,11 @@ setASSOCIATE(OSObject *object,
     if (!ad)
         return kIOReturnError;
     
-    if (ic->ic_state < IEEE80211_S_SCAN) {
-        // Radio is initializing; airportd retries on its own.  Log the drop.
-        XYLog("%s dropped: radio state=%d (init)\n", __FUNCTION__, ic->ic_state);
+    if (ic->ic_state < IEEE80211_S_SCAN)
         return kIOReturnSuccess;
-    }
-
-    if (ic->ic_state == IEEE80211_S_ASSOC || ic->ic_state == IEEE80211_S_AUTH) {
-        // Supersede an in-flight join attempt (macOS retry with new
-        // credentials or new target network): cancel its timers; the join
-        // below re-drives AUTH directly instead of restarting a full-band
-        // firmware scan, so the retry can actually complete inside
-        // airportd's join window.
-        XYLog("%s superseding in-flight association (state=%d)\n",
-              __FUNCTION__, ic->ic_state);
-        ic->ic_mgt_timer = 0;
-    } else if (ic->ic_state == IEEE80211_S_RUN &&
-               !(ad->ad_rsn_ie[APPLE80211_MAX_RSN_IE_LEN] & 1) &&
-               ic->ic_bss != NULL) {
-        // Network switch without explicit DISASSOCIATE (defect D).
-        XYLog("%s leaving current BSS before re-association\n", __FUNCTION__);
-        disassocIsVoluntary = false;
-        IEEE80211_SEND_MGMT(ic, ic->ic_bss, IEEE80211_FC0_SUBTYPE_DEAUTH,
-                            IEEE80211_REASON_AUTH_LEAVE);
-        ic->ic_mgt_timer = 0;
-    }
+    
+    if (ic->ic_state == IEEE80211_S_ASSOC || ic->ic_state == IEEE80211_S_AUTH)
+        return kIOReturnSuccess;
 
     if (ad->ad_mode != APPLE80211_AP_MODE_IBSS) {
         disassocIsVoluntary = false;
@@ -1078,32 +1059,6 @@ setASSOCIATE(OSObject *object,
         setRSN_IE(object, &rsn_ie_data);
 
         associateSSID(ad->ad_ssid, ad->ad_ssid_len, ad->ad_bssid, ad->ad_auth_lower, ad->ad_auth_upper, ad->ad_key.key, ad->ad_key.key_len, ad->ad_key.key_index);
-    }
-    
-    // Fast-join: associate directly to the cached target BSS instead of
-    // waiting for the next full-band firmware scan (~25s, exceeding
-    // airportd's ~10s join window).  Mirrors the V2 Skywalk path.
-    if (ad->ad_mode != APPLE80211_AP_MODE_IBSS) {
-        struct ieee80211_node *ni = ieee80211_find_join_target(ic);
-        if (ni != NULL && ic->ic_state == IEEE80211_S_SCAN &&
-            fHalService->isFirmwareScanning()) {
-            /* Scan in flight: abort it; the completion path joins the
-             * cached target through the standard state machine. */
-            XYLog("join: firmware scan in flight, aborting to join cached BSS\n");
-            fHalService->requestScanAbort();
-        } else if (ni != NULL) {
-            XYLog("join: fast-path BSSID=%s chan=%d rssi=%d esslen=%d\n",
-                  ether_sprintf(ni->ni_bssid),
-                  ieee80211_chan2ieee(ic, ni->ni_chan),
-                  ni->ni_rssi, ni->ni_esslen);
-            ieee80211_node_join_bss(ic, ni,
-                                    ic->ic_state == IEEE80211_S_RUN ? 1 : 0);
-        } else {
-            XYLog("join: no cached BSS for target ESSID (len=%d), scanning\n",
-                  ic->ic_des_esslen);
-            if (ic->ic_state != IEEE80211_S_SCAN)
-                ieee80211_new_state(ic, IEEE80211_S_SCAN, -1);
-        }
     }
     return kIOReturnSuccess;
 }
@@ -1133,10 +1088,8 @@ IOReturn AirportItlwm::setDISASSOCIATE(OSObject *object)
     if (ic->ic_state > IEEE80211_S_AUTH && ic->ic_bss != NULL)
         IEEE80211_SEND_MGMT(ic, ic->ic_bss, IEEE80211_FC0_SUBTYPE_DEAUTH, IEEE80211_REASON_AUTH_LEAVE);
     
-    // Cancel an in-flight join so it cannot ghost-complete after macOS has
-    // disconnected (defect D); the old code ignored the request entirely.
     if (ic->ic_state == IEEE80211_S_ASSOC || ic->ic_state == IEEE80211_S_AUTH)
-        ic->ic_mgt_timer = 0;
+        return kIOReturnSuccess;
     
     disassocIsVoluntary = true;
 
@@ -1225,9 +1178,6 @@ setSCANCACHE_CLEAR(OSObject *object, struct apple80211req *req)
     if ((ic->ic_flags & IEEE80211_F_BGSCAN) || (ic->ic_flags & IEEE80211_F_ASCAN))
         return kIOReturnSuccess;
     ieee80211_free_allnodes(ic, 0);
-    // Reset the enumeration cursor with the cache it points into (defect C).
-    fNextNodeToSend = NULL;
-    fScanResultWrapping = false;
     return kIOReturnSuccess;
 }
 
@@ -1378,9 +1328,20 @@ setSCAN_REQ(OSObject *object,
                             struct apple80211_scan_data *sd)
 {
     struct ieee80211com *ic = fHalService->get80211Controller();
-    XYLog("%s Type: %u BSS Type: %u PHY Mode: %u Dwell time: %u Rest time: %u Num channels: %u\n",
-          __FUNCTION__, sd->scan_type, sd->bss_type, sd->phy_mode,
-          sd->dwell_time, sd->rest_time, sd->num_channels);
+#if 0
+    XYLog("%s Type: %u BSS Type: %u PHY Mode: %u Dwell time: %u Rest time: %u Num channels: %u SSID: %s BSSID: %s\n",
+          __FUNCTION__,
+          sd->scan_type,
+          sd->bss_type,
+          sd->phy_mode,
+          sd->dwell_time,
+          sd->rest_time,
+          sd->num_channels,
+          sd->ssid,
+          ether_sprintf(sd->bssid.octet));
+#endif
+    if (fScanResultWrapping)
+        return 22;
     if (ic->ic_state <= IEEE80211_S_INIT)
         return 22;
     if (sd->scan_type == APPLE80211_SCAN_TYPE_FAST || sd->scan_type == APPLE80211_SCAN_TYPE_PASSIVE) {
@@ -1390,31 +1351,9 @@ setSCAN_REQ(OSObject *object,
         }
         return kIOReturnSuccess;
     }
-    if (ic->ic_state == IEEE80211_S_AUTH || ic->ic_state == IEEE80211_S_ASSOC)
-        return kIOReturnBusy;
-    /* Honor the requested channel subset/dwell via the shared one-shot
-     * restriction consumed by the next firmware scan. */
-    {
-        uint32_t valid = 0;
-        memset(ic->ic_scan_channels, 0, sizeof(ic->ic_scan_channels));
-        if (sd->num_channels > 0 && sd->num_channels <= APPLE80211_MAX_CHANNELS) {
-            for (uint32_t i = 0; i < sd->num_channels; i++) {
-                uint32_t channel = sd->channels[i].channel;
-                if (channel == 0 || channel >= 256)
-                    continue;
-                ic->ic_scan_channels[channel / 8] |= (1U << (channel % 8));
-                valid++;
-            }
-        }
-        ic->ic_scan_restricted = (valid > 0);
-    }
-    if (ic->ic_state == IEEE80211_S_RUN) {
-        ieee80211_begin_cache_bgscan(&ic->ic_ac.ac_if);
-    } else if (ic->ic_scan_restricted && fHalService->isFirmwareScanning()) {
-        fHalService->requestScanAbort();
-    }
+    ieee80211_begin_cache_bgscan(&ic->ic_ac.ac_if);
     if (scanSource) {
-        scanSource->setTimeoutMS(8000);
+        scanSource->setTimeoutMS(100);
         scanSource->enable();
     }
     return kIOReturnSuccess;
@@ -1424,42 +1363,28 @@ IOReturn AirportItlwm::
 setSCAN_REQ_MULTIPLE(OSObject *object, struct apple80211_scan_multiple_data *sd)
 {
     struct ieee80211com *ic = fHalService->get80211Controller();
-    XYLog("%s Type: %u SSID Count: %u BSSID Count: %u Dwell time: %u Num channels: %u\n",
-          __FUNCTION__, sd->scan_type, sd->ssid_count, sd->bssid_count,
-          sd->dwell_time, sd->num_channels);
-    if (fScanResultWrapping) {
-        // Stale cursor from an aborted enumeration: reset it and serve the
-        // request instead of rejecting every scan with EINVAL (defect C).
-        fScanResultWrapping = false;
-        fNextNodeToSend = NULL;
-    }
+#if 0
+    int i;
+    XYLog("%s Type: %u SSID Count: %u BSSID Count: %u PHY Mode: %u Dwell time: %u Rest time: %u Num channels: %u Unk: %u\n",
+          __FUNCTION__,
+          sd->scan_type,
+          sd->ssid_count,
+          sd->bssid_count,
+          sd->phy_mode,
+          sd->dwell_time,
+          sd->rest_time,
+          sd->num_channels,
+          sd->unk_2);
+    for (i = 0; i < sd->ssid_count; i++)
+        XYLog("%s index=%d ssid=%s ssid_len=%d\n", __FUNCTION__, i, sd->ssids[i].ssid_bytes, sd->ssids[i].ssid_len);
+#endif
+    if (fScanResultWrapping)
+        return 22;
     if (ic->ic_state <= IEEE80211_S_INIT)
         return 22;
-    if (ic->ic_state == IEEE80211_S_AUTH || ic->ic_state == IEEE80211_S_ASSOC)
-        return kIOReturnBusy;
-    /* Honor the requested channel subset/dwell via the shared one-shot
-     * restriction consumed by the next firmware scan. */
-    {
-        uint32_t valid = 0;
-        memset(ic->ic_scan_channels, 0, sizeof(ic->ic_scan_channels));
-        if (sd->num_channels > 0 && sd->num_channels <= APPLE80211_MAX_CHANNELS) {
-            for (uint32_t i = 0; i < sd->num_channels; i++) {
-                uint32_t channel = sd->channels[i].channel;
-                if (channel == 0 || channel >= 256)
-                    continue;
-                ic->ic_scan_channels[channel / 8] |= (1U << (channel % 8));
-                valid++;
-            }
-        }
-        ic->ic_scan_restricted = (valid > 0);
-    }
-    if (ic->ic_state == IEEE80211_S_RUN) {
-        ieee80211_begin_cache_bgscan(&ic->ic_ac.ac_if);
-    } else if (ic->ic_scan_restricted && fHalService->isFirmwareScanning()) {
-        fHalService->requestScanAbort();
-    }
+    ieee80211_begin_cache_bgscan(&ic->ic_ac.ac_if);
     if (scanSource) {
-        scanSource->setTimeoutMS(8000);
+        scanSource->setTimeoutMS(100);
         scanSource->enable();
     }
     return kIOReturnSuccess;
@@ -1498,11 +1423,9 @@ getSCAN_RESULT(OSObject *object, struct apple80211_scan_result **sr)
 #endif
     }
     result->asr_beacon_int = fNextNodeToSend->ni_intval;
-    result->asr_nrates = fNextNodeToSend->ni_rates.rs_nrates;
-    // asr_nrates must be assigned BEFORE the copy loop; the old order read
-    // it before assignment, so scan results never carried any rates.
-    for (int i = 0; i < result->asr_nrates && i < (int)(sizeof(result->asr_rates) / sizeof(result->asr_rates[0])); i++)
+    for (int i = 0; i < result->asr_nrates; i++ )
         result->asr_rates[i] = fNextNodeToSend->ni_rates.rs_rates[i];
+    result->asr_nrates = fNextNodeToSend->ni_rates.rs_nrates;
     result->asr_age = (uint32_t)(airport_up_time() - fNextNodeToSend->ni_age_ts);
     result->asr_cap = fNextNodeToSend->ni_capinfo;
     result->asr_channel.version = APPLE80211_VERSION;

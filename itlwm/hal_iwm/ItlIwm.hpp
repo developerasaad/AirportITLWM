@@ -41,12 +41,6 @@ public:
     void free() override;
     virtual bool attach(IOPCIDevice *device) override;
     virtual void detach(IOPCIDevice *device) override;
-    /* Abort an in-flight firmware scan so a directed Apple80211 scan
-     * request can restart the scan with the requested channel subset.
-     * Safe to call from the command gate; the abort itself runs as a
-     * queued task on the HAL task queue. */
-    void requestScanAbort() override;
-    bool isFirmwareScanning() override { return com.sc_flags & IWM_FLAG_SCANNING; }
 #ifdef AIRPORT_VTD
     bool inRateControlGate() {
         return getMainWorkLoop()->inGate();
@@ -119,8 +113,7 @@ public:
     
     //scan
     uint8_t iwm_umac_scan_fill_channels(struct iwm_softc *sc,
-                                        struct iwm_scan_channel_cfg_umac *chan, int n_ssids, int bgscan,
-                                        const uint8_t *restrict_channels, bool restricted);
+                                        struct iwm_scan_channel_cfg_umac *chan, int n_ssids, int bgscan);
     
     //coex
     uint16_t iwm_coex_agg_time_limit(struct iwm_softc *, struct ieee80211_node *);
@@ -349,8 +342,7 @@ public:
     uint16_t iwm_scan_rx_chain(struct iwm_softc *);
     uint32_t iwm_scan_rate_n_flags(struct iwm_softc *, int, int);
     uint8_t    iwm_lmac_scan_fill_channels(struct iwm_softc *,
-                                           struct iwm_scan_channel_cfg_lmac *, int, int,
-                                           const uint8_t *restrict_channels, bool restricted);
+                                           struct iwm_scan_channel_cfg_lmac *, int, int);
     int iwm_fill_probe_req_v1(struct iwm_softc *, struct iwm_scan_probe_req_v1 *);
     int    iwm_fill_probe_req(struct iwm_softc *, struct iwm_scan_probe_req *);
     int    iwm_lmac_scan(struct iwm_softc *, int);
@@ -393,7 +385,6 @@ public:
     static void    iwm_calib_timeout(void *);
     int    iwm_media_change(struct _ifnet *);
     static void    iwm_newstate_task(void *);
-    static void    iwm_scan_abort_task(void *);
     static int    iwm_newstate(struct ieee80211com *, enum ieee80211_state, int);
     void    iwm_endscan(struct iwm_softc *);
     void    iwm_fill_sf_command(struct iwm_softc *, struct iwm_sf_cfg_cmd *,

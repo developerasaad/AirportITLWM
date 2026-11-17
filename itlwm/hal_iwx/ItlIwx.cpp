@@ -7685,8 +7685,6 @@ iwx_umac_scan_fill_channels(struct iwx_softc *sc,
     struct ieee80211com *ic = &sc->sc_ic;
     struct ieee80211_channel *c;
     uint8_t nchan;
-    const uint8_t *restrict_channels = sc->sc_scan_restriction;
-    bool restricted = sc->sc_scan_restricted;
     
     for (nchan = 0, c = &ic->ic_channels[1];
          c <= &ic->ic_channels[IEEE80211_CHAN_MAX] &&
@@ -7696,14 +7694,12 @@ iwx_umac_scan_fill_channels(struct iwx_softc *sc,
         
         if (c->ic_flags == 0)
             continue;
-        {
-            unsigned selchan = (unsigned)ieee80211_chan2ieee(ic, c);
-            bool selected = !restricted ||
-                (selchan < 256 && (restrict_channels[selchan / 8] &
-                                   (1U << (selchan % 8))));
-            if (!selected)
-                continue;
-        }
+#ifdef AIRPORT_WCL
+        if (!AirportWCL::scanChannelSelected(ic->ic_wcl_scan_channels,
+                ic->ic_wcl_scan_requested && ic->ic_wcl_scan_restricted,
+                ieee80211_chan2ieee(ic, c)))
+            continue;
+#endif
         
         channel_num = ieee80211_mhz2ieee(c->ic_freq, 0);
         if (isset(sc->sc_ucode_api,
@@ -8069,23 +8065,6 @@ iwx_umac_scan(struct iwx_softc *sc, int bgscan)
     int scanSSIDLength = ic->ic_des_esslen;
     const uint8_t *scanSSID = ic->ic_des_essid;
     bool scanActive = scanSSIDLength != 0 && !bgscan;
-    {
-        /* Take the one-shot scan restriction from the shared request state. */
-        int s = splnet();
-        sc->sc_scan_restricted = ic->ic_scan_restricted;
-        if (ic->ic_scan_restricted) {
-            memcpy(sc->sc_scan_restriction, ic->ic_scan_channels,
-                   sizeof(sc->sc_scan_restriction));
-            ic->ic_scan_restricted = false;
-        } else {
-            memset(sc->sc_scan_restriction, 0, sizeof(sc->sc_scan_restriction));
-        }
-        sc->sc_scan_dwell_active = ic->ic_scan_dwell_active;
-        sc->sc_scan_dwell_passive = ic->ic_scan_dwell_passive;
-        ic->ic_scan_dwell_active = 0;
-        ic->ic_scan_dwell_passive = 0;
-        splx(s);
-    }
 #ifdef AIRPORT_WCL
     scanActive = AirportWCL::scanUsesProbes(ic->ic_wcl_scan_requested,
         ic->ic_wcl_scan_active);
@@ -8168,10 +8147,6 @@ iwx_umac_scan(struct iwx_softc *sc, int bgscan)
                   IWX_UCODE_TLV_API_ADAPTIVE_DWELL_V2)) {
             req->v8.active_dwell[IWX_SCAN_LB_LMAC_IDX] = IWL_SCAN_DWELL_ACTIVE;
             req->v8.passive_dwell[IWX_SCAN_LB_LMAC_IDX] = IWL_SCAN_DWELL_PASSIVE;
-            if (sc->sc_scan_dwell_active)
-                req->v8.active_dwell[IWX_SCAN_LB_LMAC_IDX] = (uint16_t)sc->sc_scan_dwell_active;
-            if (sc->sc_scan_dwell_passive)
-                req->v8.passive_dwell[IWX_SCAN_LB_LMAC_IDX] = (uint16_t)sc->sc_scan_dwell_passive;
             if (isset(sc->sc_enabled_capa, IWX_UCODE_TLV_CAPA_CDB_SUPPORT)) {
                 req->v8.active_dwell[IWX_SCAN_HB_LMAC_IDX] =
                     IWL_SCAN_DWELL_ACTIVE;
@@ -8182,10 +8157,6 @@ iwx_umac_scan(struct iwx_softc *sc, int bgscan)
             req->v7.active_dwell = IWL_SCAN_DWELL_ACTIVE;
             req->v7.passive_dwell = IWL_SCAN_DWELL_PASSIVE;
             req->v7.fragmented_dwell = IWL_SCAN_DWELL_FRAGMENTED;
-            if (sc->sc_scan_dwell_active)
-                req->v7.active_dwell = (uint16_t)sc->sc_scan_dwell_active;
-            if (sc->sc_scan_dwell_passive)
-                req->v7.passive_dwell = (uint16_t)sc->sc_scan_dwell_passive;
         }
     } else {
         /* These timings correspond to iwlwifi's UNASSOC scan. */
@@ -8193,10 +8164,6 @@ iwx_umac_scan(struct iwx_softc *sc, int bgscan)
         req->v1.passive_dwell = IWL_SCAN_DWELL_PASSIVE;
         req->v1.fragmented_dwell = IWL_SCAN_DWELL_FRAGMENTED;
         req->v1.extended_dwell = IWL_SCAN_DWELL_EXTENDED;
-        if (sc->sc_scan_dwell_active)
-            req->v1.active_dwell = (uint16_t)sc->sc_scan_dwell_active;
-        if (sc->sc_scan_dwell_passive)
-            req->v1.passive_dwell = (uint16_t)sc->sc_scan_dwell_passive;
         
         if (isset(sc->sc_enabled_capa, IWX_UCODE_TLV_CAPA_CDB_SUPPORT)) {
             req->v6.max_out_time[IWX_SCAN_HB_LMAC_IDX] =
@@ -8221,9 +8188,6 @@ iwx_umac_scan(struct iwx_softc *sc, int bgscan)
                                                    (struct iwx_scan_channel_cfg_umac *)cmd_data,
                                                    scanActive, bgscan);
     chanparam->flags = 0;
-    XYLog("scan(iwx/umac): bgscan=%d restricted=%d nchan=%d dwell_active=%u dwell_passive=%u essid_len=%d\n",
-          bgscan, sc->sc_scan_restricted, chanparam->count,
-          sc->sc_scan_dwell_active, sc->sc_scan_dwell_passive, scanSSIDLength);
     
     tail_data = (uint8_t*)cmd_data + sizeof(struct iwx_scan_channel_cfg_umac) *
     sc->sc_capa_n_scan_channels;
@@ -13952,27 +13916,4 @@ iwx_activate(struct iwx_softc *sc, int act)
     }
     
     return 0;
-}
-
-/* Task body: abort an in-flight firmware scan from the HAL task queue. */
-void ItlIwx::
-iwx_scan_abort_task(void *psc)
-{
-    struct iwx_softc *sc = (struct iwx_softc *)psc;
-    ItlIwx *that = container_of(sc, ItlIwx, com);
-    int err;
-    
-    if ((sc->sc_flags & IWX_FLAG_SHUTDOWN) == 0 &&
-        (sc->sc_flags & IWX_FLAG_SCANNING)) {
-        err = that->iwx_scan_abort(sc);
-        XYLog("%s: scan abort requested, err=%d\n", __FUNCTION__, err);
-    }
-}
-
-/* Command-gate entry: queue the abort on the HAL task queue. */
-void ItlIwx::
-requestScanAbort()
-{
-    struct iwx_softc *sc = &com;
-    iwx_add_task(sc, systq, &sc->scan_abort_task);
 }

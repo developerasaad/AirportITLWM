@@ -169,7 +169,7 @@ public:
 #endif
     virtual IOReturn getVHT_CAPABILITY(apple80211_vht_capability *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
     virtual IOReturn getBGSCAN_CACHE_RESULTS(apple80211_bgscan_cached_network_data_list *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
-    virtual IOReturn getROAM_PROFILE(apple80211_roam_profile_band_data *) AIRPORT_SKYWALK_OVERRIDE;
+    virtual IOReturn getROAM_PROFILE(apple80211_roam_profile_band_data *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
     virtual IOReturn getCHIP_COUNTER_STATS(apple80211_chip_stats *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
     virtual IOReturn getDBG_GUARD_TIME_PARAMS(apple80211_dbg_guard_time_params *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
     virtual IOReturn getLEAKY_AP_STATS_MODE(apple80211_leaky_ap_setting *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
@@ -313,7 +313,7 @@ public:
     virtual IOReturn setGAS_START(apple80211_gas_query_t *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
     virtual IOReturn setGAS_SET_PEER(apple80211_gas_peer_t *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
     virtual IOReturn setVHT_CAPABILITY(apple80211_vht_capability *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
-    virtual IOReturn setROAM_PROFILE(apple80211_roam_profile_band_data *) AIRPORT_SKYWALK_OVERRIDE;
+    virtual IOReturn setROAM_PROFILE(apple80211_roam_profile_band_data *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
     virtual IOReturn setAWDL_ENABLE_ROAMING(void *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
     virtual IOReturn setDBG_GUARD_TIME_PARAMS(apple80211_dbg_guard_time_params *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
     virtual IOReturn setLEAKY_AP_STATS_MODE(apple80211_leaky_ap_setting *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }

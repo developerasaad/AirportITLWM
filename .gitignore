@@ -17,3 +17,4 @@ zscripts/
 Caddyfile
 .zscripts/
 tool-results/
+ci-logs/
