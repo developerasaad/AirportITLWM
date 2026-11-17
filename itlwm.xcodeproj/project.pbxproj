@@ -1106,7 +1106,9 @@
 		1A48D424B8D644E591B45862 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
-			files = F8D94CF02B9ABFE20081A3C4 /* libkmod.a in Frameworks */;
+			files = (
+					F8D94CF02B9ABFE20081A3C4 /* libkmod.a in Frameworks */,
+			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
@@ -1273,7 +1275,9 @@
 		};
 		5088ECBB252884870068A63D /* Frameworks */ = {
 			isa = PBXGroup;
-			children = 5088ECBC252884870068A63D /* libkmod.a */;
+			children = (
+					5088ECBC252884870068A63D /* libkmod.a */,
+			);
 			name = Frameworks;
 			sourceTree = "<group>";
 		};
