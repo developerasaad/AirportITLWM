@@ -41,6 +41,11 @@ public:
     void free() override;
     virtual bool attach(IOPCIDevice *device) override;
     virtual void detach(IOPCIDevice *device) override;
+    /* Abort an in-flight firmware scan so a directed Apple80211 scan
+     * request can restart the scan with the requested channel subset.
+     * Safe to call from the command gate; the abort itself runs as a
+     * queued task on the HAL task queue. */
+    void requestScanAbort() override;
 #ifdef AIRPORT_VTD
     bool inRateControlGate() {
         return getMainWorkLoop()->inGate();
@@ -385,6 +390,7 @@ public:
     static void    iwm_calib_timeout(void *);
     int    iwm_media_change(struct _ifnet *);
     static void    iwm_newstate_task(void *);
+    static void    iwm_scan_abort_task(void *);
     static int    iwm_newstate(struct ieee80211com *, enum ieee80211_state, int);
     void    iwm_endscan(struct iwm_softc *);
     void    iwm_fill_sf_command(struct iwm_softc *, struct iwm_sf_cfg_cmd *,

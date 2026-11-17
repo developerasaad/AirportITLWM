@@ -71,7 +71,7 @@
 #include <net80211/ieee80211_priv.h>
 
 #ifdef IEEE80211_DEBUG
-int	ieee80211_debug = 0;
+int     ieee80211_debug = 0;
 #endif
 
 ///compat for undefined symbols
@@ -246,21 +246,21 @@ ieee80211_ifattach(struct _ifnet *ifp, IOEthernetController *controller)
     ieee80211_channel_init(ifp);
     
     /* IEEE 802.11 defines a MTU >= 2290 */
-    //	ifp->if_capabilities |= IFCAP_VLAN_MTU;
+    //  ifp->if_capabilities |= IFCAP_VLAN_MTU;
     
     ieee80211_setbasicrates(ic);
     (void)ieee80211_setmode(ic, (enum ieee80211_phymode)ic->ic_curmode);
     
     if (ic->ic_lintval == 0)
-        ic->ic_lintval = 100;		/* default sleep */
+        ic->ic_lintval = 100;           /* default sleep */
     ic->ic_bmissthres = IEEE80211_BEACON_MISS_THRES;
-    ic->ic_dtim_period = 1;	/* all TIMs are DTIMs */
+    ic->ic_dtim_period = 1;     /* all TIMs are DTIMs */
     
     ieee80211_node_attach(ifp);
     ieee80211_proto_attach(ifp);
     
-    //	if_addgroup(ifp, "wlan");
-    //	ifp->if_priority = IF_WIRELESS_DEFAULT_PRIORITY;
+    //  if_addgroup(ifp, "wlan");
+    //  ifp->if_priority = IF_WIRELESS_DEFAULT_PRIORITY;
     
     ieee80211_set_link_state(ic, LINK_STATE_DOWN);
     
@@ -575,8 +575,8 @@ IFM_MAKEWORD(IFM_IEEE80211, (_s), (_o), 0), 0, NULL)
     ieee80211_media_status(ifp, &imr);
     ifmedia_set(&ic->ic_media, imr.ifm_active);
     
-    //	if (maxrate)
-    //		ifp->if_baudrate = IF_Mbps(maxrate);
+    //  if (maxrate)
+    //          ifp->if_baudrate = IF_Mbps(maxrate);
     
     
 #undef ADD
@@ -908,22 +908,30 @@ ieee80211_watchdog(struct _ifnet *ifp)
             (ic->ic_state == IEEE80211_S_AUTH ||
              ic->ic_state == IEEE80211_S_ASSOC)) {
             struct ieee80211_node *ni;
-            if (ifp->if_flags & IFF_DEBUG)
-                XYLog("%s: %s timed out for %s\n",
-                      ifp->if_xname,
-                      ic->ic_state == IEEE80211_S_ASSOC ?
-                      "association" : "authentication",
-                      ether_sprintf(ic->ic_bss->ni_macaddr));
+            /* Distinguish an auth/assoc timeout for join diagnostics:
+             * this is the failure class macOS renders as "join timed out". */
+            XYLog("join-timeout: state=%d (%s) bssid=%s mgt_timer expired\n",
+                  ic->ic_state,
+                  ic->ic_state == IEEE80211_S_ASSOC ? "assoc" : "auth",
+                  ic->ic_bss ? ether_sprintf(ic->ic_bss->ni_macaddr) : "(none)");
             ni = ieee80211_find_node(ic, ic->ic_bss->ni_macaddr);
             if (ni)
                 ni->ni_fails++;
             /* Try more times to join, some drivers will timeout when doing auth/assoc */
             if (ic->ic_state == IEEE80211_S_AUTH && ni && ni->ni_fails < 3) {
+                XYLog("join-timeout: retrying auth (fails=%d)\n", ni->ni_fails);
                 ieee80211_node_join_bss(ic, ni);
                 goto done;
             }
             if (ISSET(ic->ic_flags, IEEE80211_F_AUTO_JOIN))
                 ieee80211_deselect_ess(ic);
+        } else if (ic->ic_opmode == IEEE80211_M_STA &&
+                   ic->ic_state == IEEE80211_S_RUN) {
+            /* Beacon-miss recovery: the directed probe sent by the driver
+             * produced no response within IEEE80211_TRANS_WAIT seconds.
+             * Log it: this is the primary spontaneous link-loss path. */
+            XYLog("link-loss: beacon miss/probe timeout from bssid=%s, rescanning\n",
+                  ic->ic_bss ? ether_sprintf(ic->ic_bss->ni_macaddr) : "(none)");
         }
         ieee80211_new_state(ic, IEEE80211_S_SCAN, -1);
     }

@@ -1582,6 +1582,9 @@ iwm_rx_bmiss(struct iwm_softc *sc, struct iwm_rx_packet *pkt,
     
     missed = le32toh(mbn->consec_missed_beacons_since_last_rx);
     if (missed > ic->ic_bmissthres && ic->ic_mgt_timer == 0) {
+        XYLog("link-diag: consecutive missed beacons=%u threshold=%u bssid=%s, probing\n",
+              missed, ic->ic_bmissthres,
+              ether_sprintf(ic->ic_bss->ni_macaddr));
         if (ic->ic_if.if_flags & IFF_DEBUG)
             XYLog("%s: receiving no beacons from %s; checking if "
                   "this AP is still responding to probe requests\n",
@@ -4960,6 +4963,7 @@ iwm_attach(struct iwm_softc *sc, struct pci_attach_args *pa)
     task_set(&sc->ba_task, iwm_ba_task, sc, "ba_task");
     task_set(&sc->mac_ctxt_task, iwm_mac_ctxt_task, sc, "mac_ctxt_task");
     task_set(&sc->chan_ctxt_task, iwm_chan_ctxt_task, sc, "chan_ctxt_task");
+    task_set(&sc->scan_abort_task, ItlIwm::iwm_scan_abort_task, sc, "scan_abort_task");
     
     ic->ic_node_alloc = iwm_node_alloc;
     ic->ic_bgscan_start = iwm_bgscan;

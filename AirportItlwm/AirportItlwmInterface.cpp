@@ -40,10 +40,8 @@ inputPacket(mbuf_t packet, UInt32 length, IOOptionBits options, void *param)
     
     eh = (ether_header_t *)mbuf_data(packet);
     if (len >= sizeof(ether_header_t) && eh->ether_type == htons(ETHERTYPE_PAE)) { // EAPOL packet
-        const char* dump = hexdump((uint8_t*)mbuf_data(packet), len);
-        XYLog("input EAPOL packet, len: %zu, data: %s\n", len, dump ? dump : "Failed to allocate memory");
-        if (dump)
-            IOFree((void*)dump, 3 * len + 1);
+        /* EAPOL-Key payloads carry key material; never log the frame body. */
+        XYLog("input EAPOL packet, len: %zu\n", len);
         return IO80211Interface::inputPacket(packet, (UInt32)len, 0, param);
     }
     return IOEthernetInterface::inputPacket(packet, length, options, param);

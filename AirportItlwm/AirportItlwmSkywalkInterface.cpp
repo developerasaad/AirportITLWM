@@ -322,16 +322,22 @@ getSSID(struct apple80211_ssid_data *sd)
     if (ic->ic_state == IEEE80211_S_RUN) {
         memset(sd, 0, sizeof(*sd));
         sd->version = APPLE80211_VERSION;
-#ifdef AIRPORT_WCL
-        sd->ssid_len = MIN(ic->ic_bss->ni_esslen, sizeof(sd->ssid_bytes));
-        memcpy(sd->ssid_bytes, ic->ic_bss->ni_essid, sd->ssid_len);
-#else
-        memcpy(sd->ssid_bytes, ic->ic_des_essid, strlen((const char*)ic->ic_des_essid));
-        sd->ssid_len = (uint32_t)strlen((const char*)ic->ic_des_essid);
-#endif
+        /* Report the ACTUAL associated BSS's ESSID with its explicit
+         * length.  The old code returned the desired ESSID through
+         * strlen(), which truncates at embedded NULs and reports the
+         * wrong network after a roam. */
+        if (ic->ic_bss != NULL) {
+            sd->ssid_len = MIN(ic->ic_bss->ni_esslen, sizeof(sd->ssid_bytes));
+            memcpy(sd->ssid_bytes, ic->ic_bss->ni_essid, sd->ssid_len);
+        }
         return kIOReturnSuccess;
     }
-    return 6;
+    /* Disassociated: success with an empty SSID, not an error.  airportd
+     * polls this to render "Not Connected"; a failing getter makes every
+     * poll log a query failure and leaves the native UI without state. */
+    memset(sd, 0, sizeof(*sd));
+    sd->version = APPLE80211_VERSION;
+    return kIOReturnSuccess;
 }
 
 IOReturn AirportItlwmSkywalkInterface::
@@ -359,26 +365,16 @@ setCIPHER_KEY(struct apple80211_key *key)
 #else
 
     XYLog("%s\n", __FUNCTION__);
-    const char* keydump = hexdump(key->key, key->key_len);
-    const char* rscdump = hexdump(key->key_rsc, key->key_rsc_len);
-    const char* eadump = hexdump(key->key_ea.octet, APPLE80211_ADDR_LEN);
     static_assert(__offsetof(struct apple80211_key, key_ea) == 92, "struct corrupted");
     static_assert(__offsetof(struct apple80211_key, key_rsc_len) == 80, "struct corrupted");
     static_assert(__offsetof(struct apple80211_key, wowl_kck_len) == 100, "struct corrupted");
     static_assert(__offsetof(struct apple80211_key, wowl_kek_len) == 120, "struct corrupted");
     static_assert(__offsetof(struct apple80211_key, wowl_kck_key) == 104, "struct corrupted");
-    if (keydump && rscdump && eadump)
-        XYLog("Set key request: len=%d cipher_type=%d flags=%d index=%d key=%s rsc_len=%d rsc=%s ea=%s\n",
-              key->key_len, key->key_cipher_type, key->key_flags, key->key_index, keydump, key->key_rsc_len, rscdump, eadump);
-    else
-        XYLog("Set key request, but failed to allocate memory for hexdump\n");
-    
-    if (keydump)
-        IOFree((void*)keydump, 3 * key->key_len + 1);
-    if (rscdump)
-        IOFree((void*)rscdump, 3 * key->key_rsc_len + 1);
-    if (eadump)
-        IOFree((void*)eadump, 3 * APPLE80211_ADDR_LEN + 1);
+    /* Key material (PTK/GTK/PMK) must never reach the log.  Log metadata
+     * only; lengths and addresses are sufficient for diagnosis. */
+    XYLog("Set key request: len=%d cipher_type=%d flags=%d index=%d rsc_len=%d\n",
+          key->key_len, key->key_cipher_type, key->key_flags, key->key_index,
+          key->key_rsc_len);
     
     switch (key->key_cipher_type) {
         case APPLE80211_CIPHER_NONE:
@@ -481,7 +477,12 @@ getCHANNEL(struct apple80211_channel_data *cd)
         cd->channel.flags = ieeeChanFlag2apple(ic->ic_bss->ni_chan->ic_flags, ic->ic_bss->ni_chw);
         return kIOReturnSuccess;
     }
-    return 6;
+    /* Disassociated: success with channel 0 (unknown), consistent with
+     * the empty-SSID contract. */
+    memset(cd, 0, sizeof(apple80211_channel_data));
+    cd->version = APPLE80211_VERSION;
+    cd->channel.version = APPLE80211_VERSION;
+    return kIOReturnSuccess;
 }
 
 IOReturn AirportItlwmSkywalkInterface::
@@ -663,7 +664,11 @@ getBSSID(struct apple80211_bssid_data *bd)
         memcpy(bd->bssid.octet, ic->ic_bss->ni_bssid, APPLE80211_ADDR_LEN);
         return kIOReturnSuccess;
     }
-    return 6;
+    /* Disassociated: success with a zero BSSID, consistent with the
+     * empty-SSID contract. */
+    memset(bd, 0, sizeof(*bd));
+    bd->version = APPLE80211_VERSION;
+    return kIOReturnSuccess;
 }
 
 IOReturn AirportItlwmSkywalkInterface::
@@ -793,6 +798,12 @@ setASSOCIATE(struct apple80211_assoc_data *ad)
     if (!ad)
         return kIOReturnError;
     
+    if (ad->ad_ssid_len > APPLE80211_MAX_SSID_LEN) {
+        XYLog("%s rejected: ssid_len=%u exceeds maximum\n",
+              __FUNCTION__, ad->ad_ssid_len);
+        return kIOReturnError;
+    }
+    
     if (ic->ic_state < IEEE80211_S_SCAN) {
         // Radio is initializing (firmware restart).  Record the drop so it is
         // diagnosable; airportd retries association on its own.
@@ -801,28 +812,29 @@ setASSOCIATE(struct apple80211_assoc_data *ad)
     }
 
     if (ic->ic_state == IEEE80211_S_ASSOC || ic->ic_state == IEEE80211_S_AUTH) {
-        // An earlier join attempt is still in flight.  macOS retries with new
-        // credentials or a different target network; supersede the stale
-        // attempt instead of dropping the request.  The old code silently
-        // returned success here, so airportd's join timed out and macOS
-        // reported a valid password as incorrect (defect A).
-        XYLog("%s superseding in-flight association (state=%d)\n",
+        // An earlier join attempt is still in flight and macOS is retrying
+        // (fresh credentials or a new target).  Cancel the in-flight
+        // attempt's timers WITHOUT tearing the state machine down to SCAN:
+        // the join below re-drives AUTH directly (AUTH->AUTH transition),
+        // so the retry is immediate instead of restarting a full-band
+        // firmware scan each time (which made every airportd retry timeout
+        // again - the "connect, spinner, password re-prompt" loop).
+        XYLog("%s superseding in-flight join attempt (state=%d)\n",
               __FUNCTION__, ic->ic_state);
         ic->ic_mgt_timer = 0;
-        ieee80211_new_state(ic, IEEE80211_S_SCAN, -1);
     } else if (ic->ic_state == IEEE80211_S_RUN &&
                !(ad->ad_rsn_ie[APPLE80211_MAX_RSN_IE_LEN] & 1) &&
                ic->ic_bss != NULL) {
-        // Switching networks without an explicit DISASSOCIATE first: leave
-        // the current BSS so the join scan starts from a clean state (defect
-        // D).  The "don't disassociate" flag keeps the current link for
-        // same-ESS roaming handled by the background roam machinery.
+        // Network switch without an explicit DISASSOCIATE first: deauth the
+        // current BSS.  The join below then drives the new association
+        // directly from the cached scan target; no full-band rescan is
+        // forced.  The "don't disassociate" flag keeps the current link for
+        // same-ESS roaming.
         XYLog("%s leaving current BSS before re-association\n", __FUNCTION__);
         disassocIsVoluntary = false;
         IEEE80211_SEND_MGMT(ic, ic->ic_bss, IEEE80211_FC0_SUBTYPE_DEAUTH,
                             IEEE80211_REASON_AUTH_LEAVE);
         ic->ic_mgt_timer = 0;
-        ieee80211_new_state(ic, IEEE80211_S_SCAN, -1);
     }
 
     if (ad->ad_mode != APPLE80211_AP_MODE_IBSS) {
@@ -838,6 +850,27 @@ setASSOCIATE(struct apple80211_assoc_data *ad)
 
         associateSSID(ad->ad_ssid, ad->ad_ssid_len, ad->ad_bssid, ad->ad_auth_lower, ad->ad_auth_upper, ad->ad_key.key, ad->ad_key.key_len, ad->ad_key.key_index);
     }
+    
+#ifndef AIRPORT_WCL
+    // Drive the join immediately instead of waiting for the next full-band
+    // firmware scan: associate directly to the cached target BSS when it is
+    // available (macOS scans right before issuing the join).  Fall back to
+    // the scan path only when no cached target exists.
+    if (ad->ad_mode != APPLE80211_AP_MODE_IBSS) {
+        if (ic->ic_state == IEEE80211_S_SCAN ||
+            ic->ic_state == IEEE80211_S_AUTH ||
+            ic->ic_state == IEEE80211_S_ASSOC ||
+            ic->ic_state == IEEE80211_S_RUN) {
+            if (!instance->attemptFastJoin()) {
+                // No cached BSS: the scan loop picks the target when the
+                // next firmware scan completes.
+                XYLog("%s falling back to scan-driven association\n", __FUNCTION__);
+                if (ic->ic_state != IEEE80211_S_SCAN)
+                    ieee80211_new_state(ic, IEEE80211_S_SCAN, -1);
+            }
+        }
+    }
+#endif
     return kIOReturnSuccess;
 }
 
@@ -936,10 +969,12 @@ setSCANCACHE_CLEAR(void *req)
     if ((ic->ic_flags & IEEE80211_F_BGSCAN) || (ic->ic_flags & IEEE80211_F_ASCAN))
         return kIOReturnSuccess;
     ieee80211_free_allnodes(ic, 0);
-    // The enumeration cursor must not survive the cache it points into:
-    // a stale cursor produced empty lists and use-after-free reads (defect C).
-    fNextNodeToSend = NULL;
-    fScanResultWrapping = false;
+#ifndef AIRPORT_WCL
+    // Enumeration is served from a stable snapshot; refresh it so the
+    // cache clear is immediately visible to macOS instead of serving
+    // freed-node data until the next scan completes.
+    instance->rebuildScanSnapshot();
+#endif
     return kIOReturnSuccess;
 }
 
@@ -984,7 +1019,6 @@ IOReturn AirportItlwmSkywalkInterface::
 setSCAN_REQ(struct apple80211_scan_data *sd)
 {
     struct ieee80211com *ic = fHalService->get80211Controller();
-#if 0
     XYLog("%s Type: %u BSS Type: %u PHY Mode: %u Dwell time: %u Rest time: %u Num channels: %u SSID: %s BSSID: %s\n",
           __FUNCTION__,
           sd->scan_type,
@@ -995,37 +1029,64 @@ setSCAN_REQ(struct apple80211_scan_data *sd)
           sd->num_channels,
           sd->ssid,
           ether_sprintf(sd->bssid.octet));
-#endif
-    if (fScanResultWrapping) {
-        // A previous enumeration was aborted mid-walk (macOS stopped polling
-        // early).  The stale cursor previously caused every new scan request
-        // to be rejected with EINVAL until a stray getSCAN_RESULT completed
-        // the old walk -- the network list then never refreshed (defect C).
-        // Reset the cursor and serve the new request instead.
-        fScanResultWrapping = false;
-        fNextNodeToSend = NULL;
-    }
     if (ic->ic_state <= IEEE80211_S_INIT)
         return 22;
+#ifndef AIRPORT_WCL
     if (sd->scan_type == APPLE80211_SCAN_TYPE_FAST || sd->scan_type == APPLE80211_SCAN_TYPE_PASSIVE) {
+        // Cache-assisted scan: macOS wants the current cache immediately.
+        // Serve a freshly converted snapshot (never a stale enumeration
+        // cursor) and post exactly one completion.
         if (scanSource) {
             scanSource->setTimeoutMS(100);
             scanSource->enable();
         }
         return kIOReturnSuccess;
     }
-    ieee80211_begin_cache_bgscan(&ic->ic_ac.ac_if);
+    if (sd->scan_type != APPLE80211_SCAN_TYPE_ACTIVE &&
+        sd->scan_type != APPLE80211_SCAN_TYPE_BACKGROUND) {
+        XYLog("%s rejected: unsupported scan type %u\n", __FUNCTION__, sd->scan_type);
+        return kIOReturnUnsupported;
+    }
+    if (ic->ic_state == IEEE80211_S_AUTH || ic->ic_state == IEEE80211_S_ASSOC) {
+        // A join attempt is in flight: the firmware time event occupies the
+        // radio and a concurrent scan would corrupt the association the
+        // caller is waiting for.  macOS retries or serves its cache.
+        XYLog("%s busy: join in flight (state=%d)\n", __FUNCTION__, ic->ic_state);
+        return kIOReturnBusy;
+    }
+    // Active (live) scan.  Honor the requested channel subset and dwell:
+    // the restriction is consumed by the next firmware scan command the
+    // HAL builds, turning a ~25s full-band sweep into a ~1-5s directed
+    // scan that fits airportd's per-request window (defects B, C).
+    instance->setScanRestriction(sd);
     instance->scanReqPending = true;
+    if (ic->ic_state == IEEE80211_S_RUN) {
+        ieee80211_begin_cache_bgscan(&ic->ic_ac.ac_if);
+        if (!(ic->ic_flags & IEEE80211_F_BGSCAN)) {
+            XYLog("%s bgscan could not start (port not valid), serving cache\n", __FUNCTION__);
+            if (scanSource) {
+                scanSource->setTimeoutMS(100);
+                scanSource->enable();
+            }
+            return kIOReturnSuccess;
+        }
+    } else {
+        // Disassociated: the perpetual rescan loop is (or will be) scanning.
+        // If a full-band scan is in flight and this request is directed,
+        // abort it so the restricted scan starts immediately instead of
+        // making airportd wait up to ~25s for results it asked to get
+        // from specific channels.
+        instance->fHalService->requestScanAbort();
+    }
     if (scanSource) {
-        // Fallback only.  The real completion is IEEE80211_EVT_SCAN_DONE,
-        // forwarded to macOS as APPLE80211_M_SCAN_DONE from the V2 event
-        // handler when airportd has an outstanding request.  The old code
-        // posted a fake scan-done after 100 ms regardless of firmware scan
-        // progress, which surfaced as an empty network list right after
-        // cache clears and as list churn during association (defects B, C).
-        scanSource->setTimeoutMS(5000);
+        // Fallback only: posts exactly one scan-done if the real firmware
+        // completion is lost (firmware error or device restart).  The real
+        // completion path is IEEE80211_EVT_SCAN_DONE forwarded by the
+        // event handler, which cancels this timer when it wins the race.
+        scanSource->setTimeoutMS(8000);
         scanSource->enable();
     }
+#endif
     return kIOReturnSuccess;
 }
 
@@ -1082,6 +1143,20 @@ getCOLOCATED_NETWORK_SCOPE_ID(apple80211_colocated_network_scope_id *as)
 IOReturn AirportItlwmSkywalkInterface::
 getSCAN_RESULT(struct apple80211_scan_result *sr)
 {
+#ifndef AIRPORT_WCL
+    /* Served from the stable snapshot converted under the command gate.
+     * The old live-tree cursor could dangle when a cache clear or scan
+     * completed between two of macOS's polls, reading freed nodes and
+     * producing garbage network entries. */
+    if (instance->fScanSnapshot == NULL || instance->fScanSnapshotCount == 0)
+        return 5;
+    if (instance->fScanSnapshotIndex >= instance->fScanSnapshotCount) {
+        instance->fScanSnapshotIndex = 0;
+        return 5;
+    }
+    *sr = instance->fScanSnapshot[instance->fScanSnapshotIndex++];
+    return kIOReturnSuccess;
+#else
     if (fNextNodeToSend == NULL) {
         if (fScanResultWrapping) {
             fScanResultWrapping = false;
@@ -1093,7 +1168,6 @@ getSCAN_RESULT(struct apple80211_scan_result *sr)
             }
         }
     }
-//    XYLog("%s ni_bssid=%s ni_essid=%s channel=%d flags=%d asr_cap=%d asr_nrates=%d asr_ssid_len=%d asr_ie_len=%d asr_rssi=%d\n", __FUNCTION__, ether_sprintf(fNextNodeToSend->ni_bssid), fNextNodeToSend->ni_essid, ieee80211_chan2ieee(ic, fNextNodeToSend->ni_chan), ieeeChanFlag2apple(fNextNodeToSend->ni_chan->ic_flags, -1), fNextNodeToSend->ni_capinfo, fNextNodeToSend->ni_rates.rs_nrates, fNextNodeToSend->ni_esslen, fNextNodeToSend->ni_rsnie_tlv == NULL ? 0 : fNextNodeToSend->ni_rsnie_tlv_len, fNextNodeToSend->ni_rssi);
     convertNodeToScanResult(fHalService, fNextNodeToSend, sr);
     
     fNextNodeToSend = RB_NEXT(ieee80211_tree, &fHalService->get80211Controller()->ic_tree, fNextNodeToSend);
@@ -1101,6 +1175,7 @@ getSCAN_RESULT(struct apple80211_scan_result *sr)
         fScanResultWrapping = true;
 
     return kIOReturnSuccess;
+#endif
 }
 
 #ifdef AIRPORT_WCL
@@ -1133,3 +1208,41 @@ IOReturn AirportItlwmSkywalkInterface::getHW_ADDR(apple80211_hw_mac_address *)
     return kIOReturnUnsupported;
 }
 #endif
+
+/* Store-and-report roaming profiles.  airportd pushes a profile per band
+ * (2.4/5GHz) on every power-source change and reads it back while
+ * managing auto-join; returning "unsupported" made every one of those
+ * transactions fail and logged as roaming-profile errors during each
+ * association.  The background-roam machinery keeps its own decision
+ * thresholds, so the stored values are reported verbatim. */
+IOReturn AirportItlwmSkywalkInterface::
+getROAM_PROFILE(apple80211_roam_profile_band_data *data)
+{
+    if (data == NULL)
+        return kIOReturnError;
+    if (instance->roamProfile == NULL) {
+        XYLog("%s no roam profile stored, return error\n", __FUNCTION__);
+        return kIOReturnError;
+    }
+    memcpy(data, instance->roamProfile,
+           sizeof(struct apple80211_roam_profile_band_data));
+    return kIOReturnSuccess;
+}
+
+IOReturn AirportItlwmSkywalkInterface::
+setROAM_PROFILE(apple80211_roam_profile_band_data *data)
+{
+    if (data == NULL || data->profile_cnt > 4)
+        return kIOReturnError;
+    XYLog("%s cnt=%u flags=%u\n", __FUNCTION__, data->profile_cnt, data->flags);
+    if (instance->roamProfile != NULL)
+        IOFree(instance->roamProfile,
+               sizeof(struct apple80211_roam_profile_band_data));
+    instance->roamProfile = (uint8_t *)IOMalloc(
+        sizeof(struct apple80211_roam_profile_band_data));
+    if (instance->roamProfile == NULL)
+        return kIOReturnNoMemory;
+    memcpy(instance->roamProfile, data,
+           sizeof(struct apple80211_roam_profile_band_data));
+    return kIOReturnSuccess;
+}

@@ -240,13 +240,36 @@ public:
     
     //IO80211
     uint8_t power_state;
-    struct ieee80211_node *fNextNodeToSend;
-    bool fScanResultWrapping;
     IOTimerEventSource *scanSource;
     // Non-WCL (Sonoma) only: set when airportd has an outstanding scan
     // request, so firmware scan completion is forwarded to macOS exactly
     // once per request and internal sweeps stay silent.
     bool scanReqPending;
+    /*
+     * Scan-result snapshot: macOS enumerates results via
+     * APPLE80211_IOC_SCAN_RESULT well after the firmware scan that produced
+     * them; the node tree can be mutated by cache clears, background scans
+     * and state transitions in the meantime.  Serving enumeration from a
+     * snapshot converted under the command gate removes the dangling-cursor
+     * use-after-free and the stale mid-walk state entirely.
+     */
+    struct apple80211_scan_result *fScanSnapshot;
+    uint32_t fScanSnapshotCount;
+    uint32_t fScanSnapshotIndex;
+    
+    // Shared join/scan request helpers (both Skywalk and legacy ioctl paths).
+    // Fast-join: associate directly to the cached target BSS (macOS scanned
+    // right before asking to join) instead of waiting for the next
+    // full-band firmware scan (~25s) that airportd's 10s join window can
+    // never accommodate.
+    bool attemptFastJoin();
+    // Deposit an Apple80211 scan request's channel subset + dwell as the
+    // one-shot firmware scan restriction.
+    void setScanRestriction(const struct apple80211_scan_data *sd);
+    // Rebuild the scan result snapshot (run on the command gate).
+    static IOReturn snapshotAction(OSObject *owner, void *arg0, void *arg1, void *arg2, void *arg3);
+    void rebuildScanSnapshot();
+    
     
     u_int32_t current_authtype_lower;
     u_int32_t current_authtype_upper;

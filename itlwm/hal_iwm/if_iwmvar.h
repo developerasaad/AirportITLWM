@@ -260,7 +260,7 @@ struct iwm_dma_info {
 #ifdef AIRPORT_VTD
     ItlDmaBuffer mapping;
 #endif
-	IOBufferMemoryDescriptor* buffer;
+        IOBufferMemoryDescriptor* buffer;
     bus_addr_t        paddr;
     void             *vaddr;
     size_t        size;
@@ -510,146 +510,150 @@ struct iwm_ba_task_data {
 };
 
 struct iwm_softc {
-	struct device sc_dev;
-	struct ieee80211com sc_ic;
-	int (*sc_newstate)(struct ieee80211com *, enum ieee80211_state, int);
-	int sc_newstate_pending;
+        struct device sc_dev;
+        struct ieee80211com sc_ic;
+        int (*sc_newstate)(struct ieee80211com *, enum ieee80211_state, int);
+        int sc_newstate_pending;
 
-	struct ieee80211_amrr sc_amrr;
-	CTimeout *sc_calib_to;
-	CTimeout *sc_led_blink_to;
+        struct ieee80211_amrr sc_amrr;
+        CTimeout *sc_calib_to;
+        CTimeout *sc_led_blink_to;
     pci_intr_handle_t ih;
 
-	struct task		init_task; /* NB: not reference-counted */
-//	struct refcnt		task_refs;
-	struct task		newstate_task;
-	enum ieee80211_state	ns_nstate;
-	int			ns_arg;
+        struct task             init_task; /* NB: not reference-counted */
+//      struct refcnt           task_refs;
+        struct task             newstate_task;
+        enum ieee80211_state    ns_nstate;
+        int                     ns_arg;
 
-	/* Task for firmware BlockAck setup/teardown and its arguments. */
-	struct task		ba_task;
-	struct iwm_ba_task_data    ba_rx;
+        /* Task for firmware BlockAck setup/teardown and its arguments. */
+        struct task             ba_task;
+        struct iwm_ba_task_data    ba_rx;
     struct iwm_ba_task_data    ba_tx;
 
     /* Task for ERP/HT prot/slot-time/EDCA updates. */
-    struct task		mac_ctxt_task;
+    struct task         mac_ctxt_task;
     struct task     chan_ctxt_task;
+    /* Task for aborting an in-flight firmware scan so a directed
+     * (channel-restricted) Apple80211 scan request can restart the
+     * firmware scan with the requested channel subset. */
+    struct task     scan_abort_task;
 
-	bus_space_tag_t sc_st;
-	bus_space_handle_t sc_sh;
-	bus_size_t sc_sz;
-	bus_dma_tag_t sc_dmat;
-	pci_chipset_tag_t sc_pct;
-	pcitag_t sc_pcitag;
-	IOInterruptEventSource *sc_ih;
+        bus_space_tag_t sc_st;
+        bus_space_handle_t sc_sh;
+        bus_size_t sc_sz;
+        bus_dma_tag_t sc_dmat;
+        pci_chipset_tag_t sc_pct;
+        pcitag_t sc_pcitag;
+        IOInterruptEventSource *sc_ih;
     int sc_msix;
 
-	/* TX scheduler rings. */
-	struct iwm_dma_info		sched_dma;
-	uint32_t			sched_base;
+        /* TX scheduler rings. */
+        struct iwm_dma_info             sched_dma;
+        uint32_t                        sched_base;
 
-	/* TX/RX rings. */
-	struct iwm_tx_ring txq[IWM_MAX_QUEUES];
-	struct iwm_rx_ring rxq;
-	int qfullmsk;
+        /* TX/RX rings. */
+        struct iwm_tx_ring txq[IWM_MAX_QUEUES];
+        struct iwm_rx_ring rxq;
+        int qfullmsk;
     int cmdqid;
     
     uint8_t sc_mgmt_last_antenna_idx;
     uint8_t sc_tx_ant;
 
-	int sc_sf_state;
+        int sc_sf_state;
 
-	/* ICT table. */
-	struct iwm_dma_info	ict_dma;
-	int			ict_cur;
+        /* ICT table. */
+        struct iwm_dma_info     ict_dma;
+        int                     ict_cur;
 
-	int sc_hw_rev;
-#define IWM_SILICON_A_STEP	0
-#define IWM_SILICON_B_STEP	1
-#define IWM_SILICON_C_STEP	2
-#define IWM_SILICON_D_STEP	3
-	int sc_hw_id;
-	int sc_device_family;
-#define IWM_DEVICE_FAMILY_7000	1
-#define IWM_DEVICE_FAMILY_8000	2
+        int sc_hw_rev;
+#define IWM_SILICON_A_STEP      0
+#define IWM_SILICON_B_STEP      1
+#define IWM_SILICON_C_STEP      2
+#define IWM_SILICON_D_STEP      3
+        int sc_hw_id;
+        int sc_device_family;
+#define IWM_DEVICE_FAMILY_7000  1
+#define IWM_DEVICE_FAMILY_8000  2
 #define IWM_DEVICE_FAMILY_9000  3
 
-	struct iwm_dma_info kw_dma;
-	struct iwm_dma_info fw_dma;
+        struct iwm_dma_info kw_dma;
+        struct iwm_dma_info fw_dma;
 
-	int sc_fw_chunk_done;
-	int sc_init_complete;
-#define IWM_INIT_COMPLETE	0x01
-#define IWM_CALIB_COMPLETE	0x02
+        int sc_fw_chunk_done;
+        int sc_init_complete;
+#define IWM_INIT_COMPLETE       0x01
+#define IWM_CALIB_COMPLETE      0x02
 
-	struct iwm_ucode_status sc_uc;
-	enum iwm_ucode_type sc_uc_current;
-	char sc_fwver[32];
+        struct iwm_ucode_status sc_uc;
+        enum iwm_ucode_type sc_uc_current;
+        char sc_fwver[32];
 
-	int sc_capaflags;
-	int sc_capa_max_probe_len;
-	int sc_capa_n_scan_channels;
-	uint8_t sc_ucode_api[howmany(IWM_NUM_UCODE_TLV_API, NBBY)];
+        int sc_capaflags;
+        int sc_capa_max_probe_len;
+        int sc_capa_n_scan_channels;
+        uint8_t sc_ucode_api[howmany(IWM_NUM_UCODE_TLV_API, NBBY)];
     uint8_t sc_enabled_capa[howmany(IWM_NUM_UCODE_TLV_CAPA, NBBY)];
 #define IWM_MAX_FW_CMD_VERSIONS    64
     struct iwm_fw_cmd_version cmd_versions[IWM_MAX_FW_CMD_VERSIONS];
     int n_cmd_versions;
-	char sc_fw_mcc[3];
+        char sc_fw_mcc[3];
     uint16_t sc_fw_mcc_int;
 
-	int sc_intmask;
-	int sc_flags;
+        int sc_intmask;
+        int sc_flags;
     
     uint32_t sc_fh_init_mask;
     uint32_t sc_hw_init_mask;
     uint32_t sc_fh_mask;
     uint32_t sc_hw_mask;
 
-	/*
-	 * So why do we need a separate stopped flag and a generation?
-	 * the former protects the device from issueing commands when it's
-	 * stopped (duh).  The latter protects against race from a very
-	 * fast stop/unstop cycle where threads waiting for responses do
-	 * not have a chance to run in between.  Notably: we want to stop
-	 * the device from interrupt context when it craps out, so we
-	 * don't have the luxury of waiting for quiescense.
-	 */
-	int sc_generation;
+        /*
+         * So why do we need a separate stopped flag and a generation?
+         * the former protects the device from issueing commands when it's
+         * stopped (duh).  The latter protects against race from a very
+         * fast stop/unstop cycle where threads waiting for responses do
+         * not have a chance to run in between.  Notably: we want to stop
+         * the device from interrupt context when it craps out, so we
+         * don't have the luxury of waiting for quiescense.
+         */
+        int sc_generation;
 
-//	struct rwlock ioctl_rwl;
+//      struct rwlock ioctl_rwl;
 
-	int sc_cap_off; /* PCIe caps */
+        int sc_cap_off; /* PCIe caps */
 
-	const char *sc_fwname;
+        const char *sc_fwname;
     bus_size_t sc_fwdmasegsz;
     size_t sc_nvm_max_section_size;
     struct iwm_fw_info sc_fw;
     int sc_fw_phy_config;
     struct iwm_tlv_calib_ctrl sc_default_calib[IWM_UCODE_TYPE_MAX];
 
-	struct iwm_nvm_data sc_nvm;
-	struct iwm_phy_db sc_phy_db;
+        struct iwm_nvm_data sc_nvm;
+        struct iwm_phy_db sc_phy_db;
 
-	struct iwm_bf_data sc_bf;
+        struct iwm_bf_data sc_bf;
 
-	int sc_tx_timer[IWM_MAX_QUEUES];
-	int sc_rx_ba_sessions;
+        int sc_tx_timer[IWM_MAX_QUEUES];
+        int sc_rx_ba_sessions;
 
-	int sc_scan_last_antenna;
+        int sc_scan_last_antenna;
 
-	int sc_fixed_ridx;
+        int sc_fixed_ridx;
 
-	int sc_staid;
-	int sc_nodecolor;
+        int sc_staid;
+        int sc_nodecolor;
 
-	uint8_t *sc_cmd_resp_pkt[IWM_TX_RING_COUNT];
-	size_t sc_cmd_resp_len[IWM_TX_RING_COUNT];
-	int sc_nic_locks;
+        uint8_t *sc_cmd_resp_pkt[IWM_TX_RING_COUNT];
+        size_t sc_cmd_resp_len[IWM_TX_RING_COUNT];
+        int sc_nic_locks;
 
-	struct taskq *sc_nswq;
+        struct taskq *sc_nswq;
 
-	struct iwm_rx_phy_info sc_last_phy_info;
-	int sc_ampdu_ref;
+        struct iwm_rx_phy_info sc_last_phy_info;
+        int sc_ampdu_ref;
 #define IWM_MAX_BAID   32
     struct iwm_rxba_data sc_rxba_data[IWM_MAX_BAID];
     
@@ -657,15 +661,15 @@ struct iwm_softc {
     int agg_tid_disable;
     struct iwm_tx_ba sc_tx_ba[IEEE80211_NUM_TID];
 
-	uint32_t sc_time_event_uid;
+        uint32_t sc_time_event_uid;
 
-	/* phy contexts.  we only use the first one */
-	struct iwm_phy_ctxt sc_phyctxt[IWM_NUM_PHY_CTX];
+        /* phy contexts.  we only use the first one */
+        struct iwm_phy_ctxt sc_phyctxt[IWM_NUM_PHY_CTX];
 
-	struct iwm_notif_statistics sc_stats;
-	int sc_noise;
+        struct iwm_notif_statistics sc_stats;
+        int sc_noise;
 
-	int host_interrupt_operation_mode;
+        int host_interrupt_operation_mode;
     int sc_ltr_enabled;
     enum iwm_nvm_type nvm_type;
     int support_ldpc;
@@ -686,21 +690,21 @@ struct iwm_softc {
     uint16_t num_of_pages_in_last_blk;
 
 #if NBPFILTER > 0
-	caddr_t			sc_drvbpf;
+        caddr_t                 sc_drvbpf;
 
-	union {
-		struct iwm_rx_radiotap_header th;
-		uint8_t	pad[IEEE80211_RADIOTAP_HDRLEN];
-	} sc_rxtapu;
-#define sc_rxtap	sc_rxtapu.th
-	int			sc_rxtap_len;
+        union {
+                struct iwm_rx_radiotap_header th;
+                uint8_t pad[IEEE80211_RADIOTAP_HDRLEN];
+        } sc_rxtapu;
+#define sc_rxtap        sc_rxtapu.th
+        int                     sc_rxtap_len;
 
-	union {
-		struct iwm_tx_radiotap_header th;
-		uint8_t	pad[IEEE80211_RADIOTAP_HDRLEN];
-	} sc_txtapu;
-#define sc_txtap	sc_txtapu.th
-	int			sc_txtap_len;
+        union {
+                struct iwm_tx_radiotap_header th;
+                uint8_t pad[IEEE80211_RADIOTAP_HDRLEN];
+        } sc_txtapu;
+#define sc_txtap        sc_txtapu.th
+        int                     sc_txtap_len;
 #endif
     union {
         struct iwl_lq_sta_rs_fw rs_fw;
