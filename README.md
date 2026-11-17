@@ -47,14 +47,33 @@ Output: `build/products/Debug/Sequoia/AirportItlwm.kext`.
 
 ## Status
 
-- **Baseline (this commit):** clean, unmodified laobamac upstream Sequoia
-  Debug build. CI-verified (architecture, bundle identity, Sequoia Skywalk /
-  corecapture linkage, AX211 PCI device matching, embedded Gen3 firmware).
+- **Baseline:** clean, unmodified laobamac upstream Sequoia Debug build.
+  CI-verified and independently re-verified (architecture, bundle identity,
+  Sequoia Skywalk / corecapture linkage, AX211 PCI device matching, embedded
+  Gen3 firmware, SHA-256).
 - **Hardware validation:** PENDING on the MSI target. Not yet physically
-  tested. Do not assume Wi-Fi works until the baseline is confirmed on the
-  MSI.
+  tested. Do not assume Wi-Fi works until the baseline is confirmed on the MSI.
 - **Source reduction:** NOT STARTED. Per project policy, destructive pruning
   is blocked until the upstream baseline is hardware-validated on the MSI.
+
+### Baseline build record
+
+| Field | Value |
+|---|---|
+| Source commit | `aa193163c2a8c36fbaa86fea2113e7f74e4fdf96` |
+| Upstream baseline | laobamac/itlwm `7204c69d1bfa7f5cc0f7864e08fb03e55d0ec29e` |
+| Workflow run | https://github.com/developerasaad/AirportITLWM/actions/runs/44135504957 |
+| Runner | `macos-15-intel` |
+| Configuration | Sequoia / Debug / x86_64 |
+| Kext | `AirportItlwm.kext` (com.zxystd.AirportItlwm, version 2.4.0) |
+| Binary size | 16,262,720 bytes |
+| Binary SHA-256 | `aafb5f8e1a9b077118a7796092a57c3d849f2e7e4b7a7dcf0185c4eb13110214` |
+| Artifact SHA-256 | `dd32af74c199f98ed7cc0c9fc950f548138631048740226492857984c850d90b` |
+| AX211 PCI match | `0x51F08086 0x51F18086 0x54F08086 0x7E408086 0x7F708086` |
+| Sequoia libs | IOSkywalkFamily 1.0, corecapture 1.0.0, IO80211Family 1.5.0 |
+
+Hardware-test handoff and rollback procedure are published with the
+prerelease tagged `v2.4.0-baseline-ax211`.
 
 ## License
 
