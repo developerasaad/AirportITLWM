@@ -58,21 +58,22 @@ jobs:
           grep -q "arm64" /tmp/lipo.txt && { echo "FAIL: arm64 leaked into build"; exit 1; } || true
           # Bundle metadata sanity.
           plutil -lint "$kext/Contents/Info.plist"
+          plutil -convert xml1 -o /tmp/kext-info.plist "$kext/Contents/Info.plist"
           bundle_id=$(plutil -extract CFBundleIdentifier raw "$kext/Contents/Info.plist")
           version=$(plutil -extract CFBundleVersion raw "$kext/Contents/Info.plist")
           echo "bundle_id=$bundle_id version=$version"
           [ "$bundle_id" = "com.zxystd.AirportItlwm" ] || { echo "FAIL: unexpected bundle id"; exit 1; }
-          # Required kext libraries present.
+          # Required kext libraries present (plist keys contain dots so grep the XML form).
           for lib in com.apple.iokit.IO80211Family com.apple.kpi.libkern com.apple.kpi.iokit; do
-            libver=$(plutil -extract "OSBundleLibraries.$lib" raw "$kext/Contents/Info.plist" 2>/dev/null) || {
+            grep -q "<key>$lib</key>" /tmp/kext-info.plist || {
               echo "FAIL: missing OSBundleLibrary $lib"; exit 1; }
-            echo "lib $lib -> $libver"
+            echo "lib $lib -> present"
           done
           case "$PLATFORM" in
             Sequoia)
-              plutil -extract "OSBundleLibraries.com.apple.iokit.IOSkywalkFamily" raw "$kext/Contents/Info.plist" >/dev/null || {
+              grep -q "<key>com.apple.iokit.IOSkywalkFamily</key>" /tmp/kext-info.plist || {
                 echo "FAIL: Sequoia build must link IOSkywalkFamily"; exit 1; }
-              plutil -extract "OSBundleLibraries.com.apple.driver.corecapture" raw "$kext/Contents/Info.plist" >/dev/null || {
+              grep -q "<key>com.apple.driver.corecapture</key>" /tmp/kext-info.plist || {
                 echo "FAIL: Sequoia build must link corecapture"; exit 1; } ;;
           esac
           # Embedded firmware must be present for the 9000-series (9462) and other families.
