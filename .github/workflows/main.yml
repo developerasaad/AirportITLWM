@@ -80,10 +80,14 @@ jobs:
           echo "sequoia skywalk/corecapture linkage -> OK"
           # Firmware is embedded in the Mach-O (FwBinary.cpp, zlib-compressed).
           # Verify the AX211-relevant Gen3 firmware families are embedded.
+          # Binary size floor is 4MB: the reduced driver embeds only the iwlwifi-*
+          # (AX21x family) firmware after the iwm/iwn firmware was removed, so the
+          # binary is correctly ~7MB (down from ~16MB baseline). The firmware-
+          # strings check below is the authoritative verification.
           binfile="$kext/Contents/MacOS/AirportItlwm"
           fwbytes=$(stat -f %z "$binfile")
           echo "binary_size=$fwbytes"
-          [ "$fwbytes" -gt 10000000 ] || { echo "FAIL: binary too small to contain firmware"; exit 1; }
+          [ "$fwbytes" -gt 4000000 ] || { echo "FAIL: binary too small to contain firmware"; exit 1; }
           strings "$binfile" > /tmp/fw-strings.txt
           for fw in iwlwifi-so-a0-gf-a0-68 iwlwifi-ty-a0-gf-a0-68 iwlwifi-so-a0-gf4-a0-68 iwlwifi-so-a0-hr-b0-68 iwlwifi-so-a0-jf-b0-68; do
             grep -q "$fw" /tmp/fw-strings.txt || { echo "FAIL: firmware $fw not embedded"; exit 1; }
