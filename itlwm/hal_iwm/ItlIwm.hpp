@@ -119,7 +119,8 @@ public:
     
     //scan
     uint8_t iwm_umac_scan_fill_channels(struct iwm_softc *sc,
-                                        struct iwm_scan_channel_cfg_umac *chan, int n_ssids, int bgscan);
+                                        struct iwm_scan_channel_cfg_umac *chan, int n_ssids, int bgscan,
+                                        const uint8_t *restrict_channels, bool restricted);
     
     //coex
     uint16_t iwm_coex_agg_time_limit(struct iwm_softc *, struct ieee80211_node *);
@@ -348,7 +349,8 @@ public:
     uint16_t iwm_scan_rx_chain(struct iwm_softc *);
     uint32_t iwm_scan_rate_n_flags(struct iwm_softc *, int, int);
     uint8_t    iwm_lmac_scan_fill_channels(struct iwm_softc *,
-                                           struct iwm_scan_channel_cfg_lmac *, int, int);
+                                           struct iwm_scan_channel_cfg_lmac *, int, int,
+                                           const uint8_t *restrict_channels, bool restricted);
     int iwm_fill_probe_req_v1(struct iwm_softc *, struct iwm_scan_probe_req_v1 *);
     int    iwm_fill_probe_req(struct iwm_softc *, struct iwm_scan_probe_req *);
     int    iwm_lmac_scan(struct iwm_softc *, int);
