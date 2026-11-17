@@ -145,15 +145,15 @@ jobs:
           set -euo pipefail
           version=$(awk '/MODULE_VERSION =/ {gsub(/;/, "", $3); print $3; exit}' itlwm.xcodeproj/project.pbxproj)
           tag="v$version-alpha"
+          # Use the checked-in handoff notes and append the recent change log.
+          cp .github/release-notes.md ReleaseNotes.md
           {
-            echo 'Development build for the Dell G3 3579 (Intel Wireless-AC 9462).'
             echo
-            echo 'Targets: macOS Sonoma 14.0-14.3 (Sonoma14.0 build), 14.4-14.x (Sonoma14.4 build), Sequoia 15.2+ (Sequoia build). All x86_64.'
-            echo 'Hardware validation is required before daily use.'
-            echo
-            echo 'Recent changes:'
+            echo '## Recent changes'
             git log -10 --format='- %h %s'
-          } > ReleaseNotes.md
+            echo
+            echo "**Build identity: v$version-alpha @ $(git rev-parse --short HEAD) (CI-verified, not hardware-verified).**"
+          } >> ReleaseNotes.md
           if gh release view "$tag" --json isPrerelease > current-release.json 2>/dev/null; then
             # Never replace a stable release with development artifacts.
             jq -e '.isPrerelease == true' current-release.json > /dev/null
