@@ -83,8 +83,25 @@ xcodebuild -project itlwm.xcodeproj -scheme AirportItlwm-Sequoia \
 
 ## Status
 
-Engineering is active on this repository. **All builds are CI-verified only —
-no hardware validation has been performed yet.** Defect work is tracked in
-issues #3–#6; overall state in issue #7. Development pre-releases carry the
+Engineering is active on this repository. **`v2.4.0-alpha` FAILED physical
+validation on the target machine** (see issues #3–#6 post-mortems); the
+current development build is **`v2.5.0-alpha`**, a reassessed re-engineering
+of the join/scan lifecycles with physical-testing instrumentation:
+
+- **Join fast path** — association to the cached scan target within
+  airportd's join window, instead of waiting ~25 s for a full-band
+  firmware scan (the actual cause of the wrong-password/retry loop).
+- **Directed scans** — Apple80211 scan requests' channel subsets and dwell
+  are honored (~1–5 s), instead of ~25 s full-band sweeps that always
+  exceeded airportd's ~10 s request window.
+- **Snapshot enumeration** — scan results are served from a stable copy
+  converted under the command gate, removing the dangling live-tree cursor.
+- **Security** — key material (PTK/GTK/PMK) and full EAPOL frames no longer
+  reach the kernel log.
+- **Diagnostics** — join/scan/link lifecycle lines for classifying physical
+  failures (`log show --predicate 'eventMessage CONTAINS "itlwm"'`).
+
+Defect tracking: issues #3–#6 (reassessed), #8 (spontaneous link-loss,
+instrumented), overall state in issue #7. Development pre-releases carry the
 `-alpha-<commit>` suffix; nothing is marked stable without physical
 confirmation on the target machine.
