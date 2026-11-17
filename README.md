@@ -1,87 +1,90 @@
-[![Version](https://img.shields.io/github/v/tag/laobamac/itlwm?style=flat&label=Downloads)](https://github.com/laobamac/itlwm/releases)
-# itlwm
+# AirportItlwm — Dell G3 3579 (Intel Wireless-AC 9462)
 
-**An Intel Wi-Fi Adapter Kernel Extension for macOS, based on the OpenBSD Project.**
+A hardware-focused engineering fork of **AirportItlwm.kext** — the native macOS
+Wi-Fi kernel extension for Intel wireless adapters — refined for the
+**Dell G3 3579** laptop with the **Intel Wireless-AC 9462** (CNVi, 9000-series,
+802.11ac / Wi-Fi 5, 1×1 radio) on **x86_64**.
 
-## Documentation
+## Supported systems
 
-We highly recommend exploring our documentation before using this Kernel Extension:
+| Build | macOS range | Notes |
+|---|---|---|
+| `AirportItlwm-Sonoma14.0` | 14.0 – 14.3 | Apple changed private IO80211 ABI in 14.4 |
+| `AirportItlwm-Sonoma14.4` | 14.4 – 14.x | |
+| `AirportItlwm-Sequoia` | 15.2 – 15.x (Darwin 24.2.0+) | 15.0/15.1 have no native support in any known source |
 
-- [Intro](https://OpenIntelWireless.github.io/itlwm)
-- [Compatibility](https://openintelwireless.github.io/itlwm/Compat)
-- [FAQ](https://openintelwireless.github.io/itlwm/FAQ)
+All builds are **x86_64 only**. The Sequoia build uses the WCL native Wi-Fi
+stack (IO80211Family V2 + IOSkywalk + AppleVTD bounce-buffer DMA).
 
-## AirportItlwm on macOS Sequoia
+## Hardware path (this machine)
 
-The `AirportItlwm-Sequoia` target supports macOS Sequoia 15.2 and later on x86_64
-through the native Wi-Fi interface. It has been tested on macOS 15.8 (24H23).
-Sequoia and Tahoe use separate ABI headers and build products.
+- PCI IDs `8086:42a4 / 8086:00a0 / 8086:00a4 / 8086:02a0 / 8086:40a4`
+- Driver backend: `hal_iwm` (OpenBSD iwm port), `IWM_DEVICE_FAMILY_9000`
+- Firmware: `iwm-9000-46` (Intel `iwlwifi 9000-pu-b0-jf-b0-46`), embedded
+  (zlib-compressed) in the kext binary — no external firmware files needed.
 
-With the same MacKernelSDK checkout described below:
+## Installation
+
+1. Pick the build matching your exact macOS version (see table above).
+2. Replace any existing `AirportItlwm.kext` in `EFI/OC/Kexts/` (or
+   `/Library/Extensions` for legacy boot loaders).
+3. Update your boot-loader kext list/Kernel cache if needed (OpenCore:
+   `Kernel → Add` entry must point at the new file; Legacy Kexts: rebuild
+   cache with `sudo kmutil install --update-all`).
+4. Reboot.
+
+**Debug vs Release:** Debug builds contain verbose diagnostic logging
+(`XYLog`) for investigating issues. Use Release for daily use.
+
+## Rollback
+
+Restore your previous `AirportItlwm.kext` (keep a copy before installing) and
+rebuild the kernel cache. The driver does not modify your EFI beyond the kext
+file itself.
+
+## Collecting diagnostics
+
+If a build misbehaves, run on the target machine:
+
+```sh
+bash scripts/collect-diagnostics.sh [seconds_of_recent_logs]
+```
+
+It writes a tarball to your Desktop with driver-relevant logs, kext load
+state, and sleep/wake timeline — attach it to the matching GitHub issue.
+
+## Build
+
+CI (GitHub Actions, `macos-15-intel` runner) builds and verifies every push:
+Sonoma14.0/Sonoma14.4/Sequoia × Debug/Release, checking architecture, bundle
+identity, OSBundleLibraries, embedded firmware inventory, and publishing
+SHA-256-verified pre-release zips.
+
+Local build requires Xcode and MacKernelSDK at commit `3f75008`:
 
 ```sh
 xcodebuild -project itlwm.xcodeproj -scheme AirportItlwm-Sequoia \
   -configuration Release ARCHS=x86_64 CODE_SIGNING_ALLOWED=NO build
 ```
 
-Use this kext only on Darwin 24.2.0–24.99.99. Keep the Tahoe kext restricted to
-Darwin 25.x when both systems share an OpenCore configuration. HE remains opt-in
-with `itlwm_he=1`, and the Tahoe feature limitations below also apply to Sequoia.
+## Provenance and licensing
 
-## AirportItlwm on macOS 26
+- Baseline: [laobamac/itlwm](https://github.com/laobamac/itlwm) main @ `7204c69`
+  — a strict superset of [OpenIntelWireless/itlwm](https://github.com/OpenIntelWireless/itlwm)
+  master @ `53c51c2` (+47 commits) adding native Sequoia 15.2+ support and
+  correctness fixes. Full upstream git history is preserved in this repository.
+- Upstream credits and license terms apply (see `LICENSE`,
+  `iwlwifi-firmware-license/`). Based on the OpenBSD `iwm` driver
+  (OpenBSD), Linux `iwlwifi` references, and the original AirportItlwm
+  work by zxystd and OpenIntelWireless contributors; MacKernelSDK by
+  acidanthera; WCL/Sequoia+Tahoe support by laobamac.
+- Intel firmware is redistributed under the terms documented in
+  `iwlwifi-firmware-license/`.
 
+## Status
 
-
-
-This fork supports macOS Tahoe 26.x (x86_64) through the native Wi-Fi interface,
-including scanning, connecting, network switching, and private Wi-Fi addresses.
-
-- **Wi-Fi 6 (802.11ax / HE) is disabled by default.**
-  Add `itlwm_he=1` to enable it on supported adapters.
-- WPA2-Personal and WPA2/WPA3 transition networks with optional PMF are supported.
-  WPA3-only, mandatory PMF, AWDL / AirDrop, and MLO are not supported.
-- Device support follows the upstream hardware table; Tahoe compatibility still
-  requires validation on each adapter.
-
-Download Sequoia or Tahoe **Release** and **Debug** builds from [this fork's Releases](https://github.com/laobamac/itlwm/releases).
-CI builds both systems and updates the alpha release after all builds pass on `main`.
-
-To build locally, install Xcode and Python 3, and check out MacKernelSDK commit
-`3f750085caa17ec3a7880f11c11bf4f48cd6a164` in `MacKernelSDK/`:
-
-```sh
-xcodebuild -project itlwm.xcodeproj -scheme AirportItlwm-Tahoe \
-  -configuration Release ARCHS=x86_64 CODE_SIGNING_ALLOWED=NO build
-```
-
-## Questions and Issues
-
-Check out our [FAQ Page](https://openintelwireless.github.io/itlwm/FAQ) for more info.
-
-If you have other questions or feedback, feel free to [![Join the chat at https://gitter.im/OpenIntelWireless/itlwm](https://badges.gitter.im/OpenIntelWireless/itlwm.svg)](https://gitter.im/OpenIntelWireless/itlwm?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge).
-
-We only accept bug reports in GitHub Issues, before opening an issue, you're recommended to reconfirm it with us on [Gitter](https://gitter.im/OpenIntelWireless/itlwm); once it's confirmed, please use the provided issue template.
-
-## Credits
-
-- [Acidanthera](https://github.com/acidanthera) for [MacKernelSDK](https://github.com/acidanthera/MacKernelSDK)
-- [Apple](https://www.apple.com) for [macOS](https://www.apple.com/macos)
-- [AppleIntelWiFi](https://github.com/AppleIntelWiFi) for [Black80211-Catalina](https://github.com/AppleIntelWiFi/Black80211-Catalina)
-- [ErrorErrorError](https://github.com/ErrorErrorError) for UserClient bug fixes
-- [Intel](https://www.intel.com) for [Wireless Adapter Firmwares](https://www.intel.com/content/www/us/en/support/articles/000005511/network-and-io/wireless.html) and [iwlwifi](https://wireless.wiki.kernel.org/en/users/drivers/iwlwifi)
-- [Linux](https://www.kernel.org) for [iwlwifi](https://wireless.wiki.kernel.org/en/users/drivers/iwlwifi)
-- [mercurysquad](https://github.com/mercurysquad) for [Voodoo80211](https://github.com/mercurysquad/Voodoo80211)
-- [OpenBSD](https://openbsd.org) for [net80211, iwn, iwm, and iwx](https://github.com/openbsd/src)
-- [pigworlds](https://github.com/OpenIntelWireless/itlwm/commits?author=pigworlds) for DVM devices support, MIRA bug fixes, and Tx aggregation for MVM Gen 1 devices
-- [rpeshkov](https://github.com/rpeshkov) for [black80211](https://github.com/rpeshkov/black80211)
-- [usr-sse2](https://github.com/usr-sse2) for implementing the usage of Apple RSN Supplicant and bug fixes
-- [zxystd](https://github.com/zxystd) for developing [itlwm](https://github.com/OpenIntelWireless/itlwm)
-
-## Acknowledgements
-
-- [@penghubingzhou](https://github.com/startpenghubingzhou)
-- [@Bat.bat](https://github.com/williambj1)
-- [@iStarForever](https://github.com/XStar-Dev)
-- [@stevezhengshiqi](https://github.com/stevezhengshiqi)
-- [@DogAndPot](https://github.com/DogAndPot) for providing resources and help for system configuration
-- [@Daliansky](https://github.com/Daliansky) for providing Wi-Fi cards
+Engineering is active on this repository. **All builds are CI-verified only —
+no hardware validation has been performed yet.** Defect work is tracked in
+issues #3–#6; overall state in issue #7. Development pre-releases carry the
+`-alpha-<commit>` suffix; nothing is marked stable without physical
+confirmation on the target machine.
