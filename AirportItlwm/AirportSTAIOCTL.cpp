@@ -1041,11 +1041,32 @@ setASSOCIATE(OSObject *object,
     if (!ad)
         return kIOReturnError;
     
-    if (ic->ic_state < IEEE80211_S_SCAN)
+    if (ic->ic_state < IEEE80211_S_SCAN) {
+        // Radio is initializing; airportd retries on its own.  Log the drop.
+        XYLog("%s dropped: radio state=%d (init)\n", __FUNCTION__, ic->ic_state);
         return kIOReturnSuccess;
-    
-    if (ic->ic_state == IEEE80211_S_ASSOC || ic->ic_state == IEEE80211_S_AUTH)
-        return kIOReturnSuccess;
+    }
+
+    if (ic->ic_state == IEEE80211_S_ASSOC || ic->ic_state == IEEE80211_S_AUTH) {
+        // Supersede an in-flight join attempt (macOS retry with new
+        // credentials or new target network) instead of dropping the
+        // request: dropped retries made airportd time out and report a
+        // valid password as incorrect (defect A).
+        XYLog("%s superseding in-flight association (state=%d)\n",
+              __FUNCTION__, ic->ic_state);
+        ic->ic_mgt_timer = 0;
+        ieee80211_new_state(ic, IEEE80211_S_SCAN, -1);
+    } else if (ic->ic_state == IEEE80211_S_RUN &&
+               !(ad->ad_rsn_ie[APPLE80211_MAX_RSN_IE_LEN] & 1) &&
+               ic->ic_bss != NULL) {
+        // Network switch without explicit DISASSOCIATE (defect D).
+        XYLog("%s leaving current BSS before re-association\n", __FUNCTION__);
+        disassocIsVoluntary = false;
+        IEEE80211_SEND_MGMT(ic, ic->ic_bss, IEEE80211_FC0_SUBTYPE_DEAUTH,
+                            IEEE80211_REASON_AUTH_LEAVE);
+        ic->ic_mgt_timer = 0;
+        ieee80211_new_state(ic, IEEE80211_S_SCAN, -1);
+    }
 
     if (ad->ad_mode != APPLE80211_AP_MODE_IBSS) {
         disassocIsVoluntary = false;
@@ -1088,8 +1109,10 @@ IOReturn AirportItlwm::setDISASSOCIATE(OSObject *object)
     if (ic->ic_state > IEEE80211_S_AUTH && ic->ic_bss != NULL)
         IEEE80211_SEND_MGMT(ic, ic->ic_bss, IEEE80211_FC0_SUBTYPE_DEAUTH, IEEE80211_REASON_AUTH_LEAVE);
     
+    // Cancel an in-flight join so it cannot ghost-complete after macOS has
+    // disconnected (defect D); the old code ignored the request entirely.
     if (ic->ic_state == IEEE80211_S_ASSOC || ic->ic_state == IEEE80211_S_AUTH)
-        return kIOReturnSuccess;
+        ic->ic_mgt_timer = 0;
     
     disassocIsVoluntary = true;
 
@@ -1178,6 +1201,9 @@ setSCANCACHE_CLEAR(OSObject *object, struct apple80211req *req)
     if ((ic->ic_flags & IEEE80211_F_BGSCAN) || (ic->ic_flags & IEEE80211_F_ASCAN))
         return kIOReturnSuccess;
     ieee80211_free_allnodes(ic, 0);
+    // Reset the enumeration cursor with the cache it points into (defect C).
+    fNextNodeToSend = NULL;
+    fScanResultWrapping = false;
     return kIOReturnSuccess;
 }
 
@@ -1378,8 +1404,12 @@ setSCAN_REQ_MULTIPLE(OSObject *object, struct apple80211_scan_multiple_data *sd)
     for (i = 0; i < sd->ssid_count; i++)
         XYLog("%s index=%d ssid=%s ssid_len=%d\n", __FUNCTION__, i, sd->ssids[i].ssid_bytes, sd->ssids[i].ssid_len);
 #endif
-    if (fScanResultWrapping)
-        return 22;
+    if (fScanResultWrapping) {
+        // Stale cursor from an aborted enumeration: reset it and serve the
+        // request instead of rejecting every scan with EINVAL (defect C).
+        fScanResultWrapping = false;
+        fNextNodeToSend = NULL;
+    }
     if (ic->ic_state <= IEEE80211_S_INIT)
         return 22;
     ieee80211_begin_cache_bgscan(&ic->ic_ac.ac_if);
@@ -1423,9 +1453,11 @@ getSCAN_RESULT(OSObject *object, struct apple80211_scan_result **sr)
 #endif
     }
     result->asr_beacon_int = fNextNodeToSend->ni_intval;
-    for (int i = 0; i < result->asr_nrates; i++ )
-        result->asr_rates[i] = fNextNodeToSend->ni_rates.rs_rates[i];
     result->asr_nrates = fNextNodeToSend->ni_rates.rs_nrates;
+    // asr_nrates must be assigned BEFORE the copy loop; the old order read
+    // it before assignment, so scan results never carried any rates.
+    for (int i = 0; i < result->asr_nrates && i < (int)(sizeof(result->asr_rates) / sizeof(result->asr_rates[0])); i++)
+        result->asr_rates[i] = fNextNodeToSend->ni_rates.rs_rates[i];
     result->asr_age = (uint32_t)(airport_up_time() - fNextNodeToSend->ni_age_ts);
     result->asr_cap = fNextNodeToSend->ni_capinfo;
     result->asr_channel.version = APPLE80211_VERSION;

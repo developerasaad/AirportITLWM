@@ -29,6 +29,10 @@ bool AirportItlwm::init(OSDictionary *properties)
     bool ret = super::init(properties);
     awdlSyncEnable = true;
     power_state = 0;
+    // Enumeration cursor starts clean: these members were previously left
+    // uninitialized, so the first scan-result walk dereferenced garbage.
+    fNextNodeToSend = NULL;
+    fScanResultWrapping = false;
     memset(geo_location_cc, 0, sizeof(geo_location_cc));
     return ret;
 }
@@ -144,8 +148,8 @@ void AirportItlwm::associateSSID(uint8_t *ssid, uint32_t ssid_len, const struct 
     ieee80211_disable_rsn(ic);
     ieee80211_disable_wep(ic);
     
-    struct ieee80211_wpaparams	 wpa;
-    struct ieee80211_nwkey		 nwkey;
+    struct ieee80211_wpaparams   wpa;
+    struct ieee80211_nwkey               nwkey;
     bzero(&wpa, sizeof(wpa));
     bzero(&nwkey, sizeof(nwkey));
     
@@ -162,7 +166,7 @@ void AirportItlwm::associateSSID(uint8_t *ssid, uint32_t ssid_len, const struct 
         ic->ic_flags |= IEEE80211_F_DESBSSID;
     }
     else {
-        memset(ic->ic_des_bssid, 0, IEEE80211_ADDR_LEN);	
+        memset(ic->ic_des_bssid, 0, IEEE80211_ADDR_LEN);        
         ic->ic_flags &= ~IEEE80211_F_DESBSSID;
     }
 
@@ -187,13 +191,18 @@ void AirportItlwm::associateSSID(uint8_t *ssid, uint32_t ssid_len, const struct 
         XYLog("%s %d\n", __FUNCTION__, __LINE__);
         wpa.i_akms |= IEEE80211_WPA_AKM_PSK | IEEE80211_WPA_AKM_SHA256_PSK;
         wpa.i_enabled = 1;
-        memcpy(ic->ic_psk, key, sizeof(ic->ic_psk));
+        // ic_psk is the 32-byte PMK source.  Copy exactly the key material
+        // provided; the old unconditional 32-byte copy read past key_len and
+        // kept stale bytes from a previous network in the PMK (defect A).
+        memset(ic->ic_psk, 0, sizeof(ic->ic_psk));
+        if (key_len > 0)
+            memcpy(ic->ic_psk, key, MIN(key_len, sizeof(ic->ic_psk)));
         ic->ic_flags |= IEEE80211_F_PSK;
         ieee80211_ioctl_setwpaparms(ic, &wpa);
     }
     if (authtype_upper & (APPLE80211_AUTHTYPE_WPA | APPLE80211_AUTHTYPE_WPA2 | APPLE80211_AUTHTYPE_SHA256_8021X)) {
         XYLog("%s %d\n", __FUNCTION__, __LINE__);
-        wpa.i_akms |= IEEE80211_WPA_AKM_8021X | IEEE80211_WPA_AKM_SHA256_8021X;	
+        wpa.i_akms |= IEEE80211_WPA_AKM_8021X | IEEE80211_WPA_AKM_SHA256_8021X; 
         wpa.i_enabled = 1;
         ieee80211_ioctl_setwpaparms(ic, &wpa);
     }
@@ -217,7 +226,7 @@ void AirportItlwm::associateSSID(uint8_t *ssid, uint32_t ssid_len, const struct 
 
 void AirportItlwm::setPTK(const u_int8_t *key, size_t key_len) {
     struct ieee80211com *ic = fHalService->get80211Controller();
-    struct ieee80211_node	* ni = ic->ic_bss;
+    struct ieee80211_node       * ni = ic->ic_bss;
     struct ieee80211_key *k;
     int keylen;
     
@@ -258,7 +267,7 @@ void AirportItlwm::setPTK(const u_int8_t *key, size_t key_len) {
 
 void AirportItlwm::setGTK(const u_int8_t *gtk, size_t key_len, u_int8_t kid, u_int8_t *rsc) {
     struct ieee80211com *ic = fHalService->get80211Controller();
-    struct ieee80211_node	* ni = ic->ic_bss;
+    struct ieee80211_node       * ni = ic->ic_bss;
     struct ieee80211_key *k;
     int keylen;
     

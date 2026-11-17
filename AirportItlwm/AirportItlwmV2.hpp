@@ -243,6 +243,10 @@ public:
     struct ieee80211_node *fNextNodeToSend;
     bool fScanResultWrapping;
     IOTimerEventSource *scanSource;
+    // Non-WCL (Sonoma) only: set when airportd has an outstanding scan
+    // request, so firmware scan completion is forwarded to macOS exactly
+    // once per request and internal sweeps stay silent.
+    bool scanReqPending;
     
     u_int32_t current_authtype_lower;
     u_int32_t current_authtype_upper;

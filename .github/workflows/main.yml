@@ -76,10 +76,18 @@ jobs:
               grep -q "<key>com.apple.driver.corecapture</key>" /tmp/kext-info.plist || {
                 echo "FAIL: Sequoia build must link corecapture"; exit 1; } ;;
           esac
-          # Embedded firmware must be present for the 9000-series (9462) and other families.
-          fwcount=$(ls "$kext/Contents/Resources" 2>/dev/null | wc -l | tr -d ' ')
-          echo "firmware_files=$fwcount"
-          [ "$fwcount" -ge 20 ] || { echo "FAIL: firmware resources incomplete"; exit 1; }
+          # Firmware is embedded in the Mach-O binary itself (FwBinary.cpp),
+          # not in Contents/Resources.  Verify the 9462's 9000-series
+          # firmware plus representative families are embedded, and that the
+          # binary is large enough to carry the ~50MB firmware payload.
+          binfile="$kext/Contents/MacOS/AirportItlwm"
+          fwbytes=$(stat -f %z "$binfile")
+          echo "binary_size=$fwbytes"
+          [ "$fwbytes" -gt 30000000 ] || { echo "FAIL: binary too small to contain firmware"; exit 1; }
+          for fw in iwm-9000-46 iwm-9260-46 iwm-8265-36 iwlwifi-Qu-b0-jf-b0-68 iwlwifi-Qu-c0-jf-b0-68 iwlwifi-QuZ-a0-jf-b0-68; do
+            strings "$binfile" | grep -q "$fw" || { echo "FAIL: firmware $fw not embedded"; exit 1; }
+            echo "fw $fw -> embedded"
+          done
           # Undefined symbols should be covered by declared OSBundleLibraries.
           nm -u "$kext/Contents/MacOS/AirportItlwm" | head -200 > /tmp/undef.txt || true
           echo "undefined_symbol_count=$(wc -l < /tmp/undef.txt)"

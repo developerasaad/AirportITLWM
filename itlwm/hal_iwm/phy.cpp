@@ -366,8 +366,12 @@ iwm_protect_session(struct iwm_softc *sc, struct iwm_node *in,
               IWM_TE_V2_NOTIF_HOST_EVENT_END |
               IWM_T2_V2_START_IMMEDIATELY);
     
-    if (iwm_send_time_event_cmd(sc, &time_cmd) == 0)
+    int terr = iwm_send_time_event_cmd(sc, &time_cmd);
+    if (terr == 0)
         sc->sc_flags |= IWM_FLAG_TE_ACTIVE;
+    else
+        XYLog("%s: time event (association channel protection) failed: %d\n",
+              __FUNCTION__, terr);
     
     DELAY(100);
 }

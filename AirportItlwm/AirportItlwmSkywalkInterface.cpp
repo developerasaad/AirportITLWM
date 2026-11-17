@@ -148,7 +148,14 @@ void AirportItlwmSkywalkInterface::associateSSID(uint8_t *ssid, uint32_t ssid_le
         XYLog("%s %d\n", __FUNCTION__, __LINE__);
         wpa.i_akms |= IEEE80211_WPA_AKM_PSK | IEEE80211_WPA_AKM_SHA256_PSK;
         wpa.i_enabled = 1;
-        memcpy(ic->ic_psk, key, sizeof(ic->ic_psk));
+        // ic_psk is consumed as the 32-byte PMK by the in-kernel supplicant.
+        // Copy exactly the key material macOS supplied: an unconditional
+        // 32-byte copy read past key_len and kept stale bytes from a previous
+        // network in the PMK, causing spurious MIC failures that macOS
+        // reported as an incorrect password (defect A).
+        memset(ic->ic_psk, 0, sizeof(ic->ic_psk));
+        if (key_len > 0)
+            memcpy(ic->ic_psk, key, MIN(key_len, sizeof(ic->ic_psk)));
         ic->ic_flags |= IEEE80211_F_PSK;
         ieee80211_ioctl_setwpaparms(ic, &wpa);
     }
@@ -283,6 +290,10 @@ init(IOService *provider)
         return false;
     this->fHalService = instance->fHalService;
     this->scanSource = instance->scanSource;
+    // Enumeration cursor starts clean: these members were previously left
+    // uninitialized, so the first scan-result walk dereferenced garbage.
+    fNextNodeToSend = NULL;
+    fScanResultWrapping = false;
 #ifdef AIRPORT_WCL
     IOEthernetAddress address;
     if (instance->getHardwareAddress(&address) != kIOReturnSuccess)
@@ -782,11 +793,37 @@ setASSOCIATE(struct apple80211_assoc_data *ad)
     if (!ad)
         return kIOReturnError;
     
-    if (ic->ic_state < IEEE80211_S_SCAN)
+    if (ic->ic_state < IEEE80211_S_SCAN) {
+        // Radio is initializing (firmware restart).  Record the drop so it is
+        // diagnosable; airportd retries association on its own.
+        XYLog("%s dropped: radio state=%d (init)\n", __FUNCTION__, ic->ic_state);
         return kIOReturnSuccess;
-    
-    if (ic->ic_state == IEEE80211_S_ASSOC || ic->ic_state == IEEE80211_S_AUTH)
-        return kIOReturnSuccess;
+    }
+
+    if (ic->ic_state == IEEE80211_S_ASSOC || ic->ic_state == IEEE80211_S_AUTH) {
+        // An earlier join attempt is still in flight.  macOS retries with new
+        // credentials or a different target network; supersede the stale
+        // attempt instead of dropping the request.  The old code silently
+        // returned success here, so airportd's join timed out and macOS
+        // reported a valid password as incorrect (defect A).
+        XYLog("%s superseding in-flight association (state=%d)\n",
+              __FUNCTION__, ic->ic_state);
+        ic->ic_mgt_timer = 0;
+        ieee80211_new_state(ic, IEEE80211_S_SCAN, -1);
+    } else if (ic->ic_state == IEEE80211_S_RUN &&
+               !(ad->ad_rsn_ie[APPLE80211_MAX_RSN_IE_LEN] & 1) &&
+               ic->ic_bss != NULL) {
+        // Switching networks without an explicit DISASSOCIATE first: leave
+        // the current BSS so the join scan starts from a clean state (defect
+        // D).  The "don't disassociate" flag keeps the current link for
+        // same-ESS roaming handled by the background roam machinery.
+        XYLog("%s leaving current BSS before re-association\n", __FUNCTION__);
+        disassocIsVoluntary = false;
+        IEEE80211_SEND_MGMT(ic, ic->ic_bss, IEEE80211_FC0_SUBTYPE_DEAUTH,
+                            IEEE80211_REASON_AUTH_LEAVE);
+        ic->ic_mgt_timer = 0;
+        ieee80211_new_state(ic, IEEE80211_S_SCAN, -1);
+    }
 
     if (ad->ad_mode != APPLE80211_AP_MODE_IBSS) {
         disassocIsVoluntary = false;
@@ -817,7 +854,7 @@ setDISASSOCIATE(struct apple80211_disassoc_data *ad)
         IEEE80211_SEND_MGMT(ic, ic->ic_bss, IEEE80211_FC0_SUBTYPE_DEAUTH, IEEE80211_REASON_AUTH_LEAVE);
     
     if (ic->ic_state == IEEE80211_S_ASSOC || ic->ic_state == IEEE80211_S_AUTH)
-        return kIOReturnSuccess;
+        ic->ic_mgt_timer = 0;  // cancel the in-flight join so it cannot ghost-complete
     
     disassocIsVoluntary = true;
 
@@ -899,6 +936,10 @@ setSCANCACHE_CLEAR(void *req)
     if ((ic->ic_flags & IEEE80211_F_BGSCAN) || (ic->ic_flags & IEEE80211_F_ASCAN))
         return kIOReturnSuccess;
     ieee80211_free_allnodes(ic, 0);
+    // The enumeration cursor must not survive the cache it points into:
+    // a stale cursor produced empty lists and use-after-free reads (defect C).
+    fNextNodeToSend = NULL;
+    fScanResultWrapping = false;
     return kIOReturnSuccess;
 }
 
@@ -933,7 +974,7 @@ getLINK_CHANGED_EVENT_DATA(struct apple80211_link_changed_event_data *ed)
     if (ed->isLinkDown) {
         ed->voluntary = disassocIsVoluntary;
         ed->reason = APPLE80211_LINK_DOWN_REASON_DEAUTH;
-    } else
+    } else if (ic->ic_bss != NULL)
         ed->rssi = -(0 - IWM_MIN_DBM - ic->ic_bss->ni_rssi);
     XYLog("Link %s, reason: %d, voluntary: %d\n", ed->isLinkDown ? "down" : "up", ed->reason, ed->voluntary);
     return kIOReturnSuccess;
@@ -955,8 +996,15 @@ setSCAN_REQ(struct apple80211_scan_data *sd)
           sd->ssid,
           ether_sprintf(sd->bssid.octet));
 #endif
-    if (fScanResultWrapping)
-        return 22;
+    if (fScanResultWrapping) {
+        // A previous enumeration was aborted mid-walk (macOS stopped polling
+        // early).  The stale cursor previously caused every new scan request
+        // to be rejected with EINVAL until a stray getSCAN_RESULT completed
+        // the old walk -- the network list then never refreshed (defect C).
+        // Reset the cursor and serve the new request instead.
+        fScanResultWrapping = false;
+        fNextNodeToSend = NULL;
+    }
     if (ic->ic_state <= IEEE80211_S_INIT)
         return 22;
     if (sd->scan_type == APPLE80211_SCAN_TYPE_FAST || sd->scan_type == APPLE80211_SCAN_TYPE_PASSIVE) {
@@ -967,8 +1015,15 @@ setSCAN_REQ(struct apple80211_scan_data *sd)
         return kIOReturnSuccess;
     }
     ieee80211_begin_cache_bgscan(&ic->ic_ac.ac_if);
+    instance->scanReqPending = true;
     if (scanSource) {
-        scanSource->setTimeoutMS(100);
+        // Fallback only.  The real completion is IEEE80211_EVT_SCAN_DONE,
+        // forwarded to macOS as APPLE80211_M_SCAN_DONE from the V2 event
+        // handler when airportd has an outstanding request.  The old code
+        // posted a fake scan-done after 100 ms regardless of firmware scan
+        // progress, which surfaced as an empty network list right after
+        // cache clears and as list churn during association (defects B, C).
+        scanSource->setTimeoutMS(5000);
         scanSource->enable();
     }
     return kIOReturnSuccess;
@@ -987,9 +1042,11 @@ static int convertNodeToScanResult(ItlHalService *fHalService, struct ieee80211_
         result->asr_ie_len = 0;
     }
     result->asr_beacon_int = fNextNodeToSend->ni_intval;
-    for (int i = 0; i < result->asr_nrates; i++ )
-        result->asr_rates[i] = fNextNodeToSend->ni_rates.rs_rates[i];
     result->asr_nrates = fNextNodeToSend->ni_rates.rs_nrates;
+    // asr_nrates must be assigned BEFORE the copy loop; the old order read
+    // it before assignment, so scan results never carried any rates.
+    for (int i = 0; i < result->asr_nrates && i < (int)(sizeof(result->asr_rates) / sizeof(result->asr_rates[0])); i++)
+        result->asr_rates[i] = fNextNodeToSend->ni_rates.rs_rates[i];
     result->asr_age = (uint32_t)(airport_up_time() - fNextNodeToSend->ni_age_ts);
     result->asr_cap = fNextNodeToSend->ni_capinfo;
     result->asr_channel.version = APPLE80211_VERSION;
@@ -1039,7 +1096,7 @@ getSCAN_RESULT(struct apple80211_scan_result *sr)
 //    XYLog("%s ni_bssid=%s ni_essid=%s channel=%d flags=%d asr_cap=%d asr_nrates=%d asr_ssid_len=%d asr_ie_len=%d asr_rssi=%d\n", __FUNCTION__, ether_sprintf(fNextNodeToSend->ni_bssid), fNextNodeToSend->ni_essid, ieee80211_chan2ieee(ic, fNextNodeToSend->ni_chan), ieeeChanFlag2apple(fNextNodeToSend->ni_chan->ic_flags, -1), fNextNodeToSend->ni_capinfo, fNextNodeToSend->ni_rates.rs_nrates, fNextNodeToSend->ni_esslen, fNextNodeToSend->ni_rsnie_tlv == NULL ? 0 : fNextNodeToSend->ni_rsnie_tlv_len, fNextNodeToSend->ni_rssi);
     convertNodeToScanResult(fHalService, fNextNodeToSend, sr);
     
-    fNextNodeToSend = RB_NEXT(ieee80211_tree, &HalService->get80211Controller()->ic_tree, fNextNodeToSend);
+    fNextNodeToSend = RB_NEXT(ieee80211_tree, &fHalService->get80211Controller()->ic_tree, fNextNodeToSend);
     if (fNextNodeToSend == NULL)
         fScanResultWrapping = true;
 

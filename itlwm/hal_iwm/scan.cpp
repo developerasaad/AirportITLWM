@@ -998,8 +998,15 @@ iwm_bgscan(struct ieee80211com *ic)
     ItlIwm *that = container_of(sc, ItlIwm, com);
     int err;
     
-    if (sc->sc_flags & IWM_FLAG_SCANNING)
+    if (sc->sc_flags & IWM_FLAG_SCANNING) {
+        // A firmware scan is already in flight (e.g. the perpetual rescan
+        // loop while disconnected, or a racing foreground scan).  Logging
+        // makes the skip diagnosable instead of silently dropping the
+        // background scan request.
+        XYLog("%s: scan already in progress, background scan skipped\n",
+              __FUNCTION__);
         return 0;
+    }
     
     if (isset(sc->sc_enabled_capa, IWM_UCODE_TLV_CAPA_UMAC_SCAN))
         err = that->iwm_umac_scan(sc, 1);

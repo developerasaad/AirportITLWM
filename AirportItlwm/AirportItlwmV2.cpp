@@ -107,6 +107,20 @@ eventHandler(struct ieee80211com *ic, int msgCode, void *data)
         case IEEE80211_EVT_STA_DEAUTH:
             interface->postMessage(APPLE80211_M_DEAUTH_RECEIVED, NULL, 0, 0);
             break;
+        case IEEE80211_EVT_SCAN_DONE:
+            // Real firmware scan completion (posted from ieee80211_end_scan on
+            // the workloop).  Forward it to macOS only when airportd has an
+            // outstanding scan request, so the perpetual rescan loop while
+            // disconnected and RSSI background scans do not churn the network
+            // list UI (defects B, C).  This event was previously ignored and
+            // macOS only ever saw the 100 ms fake scan-done timer.
+            if (that->scanReqPending) {
+                that->scanReqPending = false;
+                if (that->scanSource)
+                    that->scanSource->cancelTimeout();
+                interface->postMessage(APPLE80211_M_SCAN_DONE, NULL, 0, 0);
+            }
+            break;
         default:
             break;
     }
@@ -131,7 +145,14 @@ void AirportItlwm::fakeScanDone(OSObject *owner, IOTimerEventSource *sender)
     if (that->fNetIf)
         static_cast<AirportItlwmSkywalkInterface *>(that->fNetIf)->completeWCLScan();
 #else
-    that->fNetIf->postMessage(APPLE80211_M_SCAN_DONE, &msg, 4, 0);
+    // Timer fired: either the FAST/PASSIVE quick path (macOS wants the
+    // cached results immediately) or the fallback for an ACTIVE scan
+    // whose real completion event did not arrive in time (firmware error
+    // or device restart).  Both post exactly one scan-done per request;
+    // the event handler cancels this timer when it wins the race.
+    that->scanReqPending = false;
+    if (that->fNetIf)
+        that->fNetIf->postMessage(APPLE80211_M_SCAN_DONE, &msg, 4, 0);
 #endif
 }
 
@@ -141,6 +162,7 @@ bool AirportItlwm::init(OSDictionary *properties)
     bool ret = super::init(properties);
     awdlSyncEnable = true;
     power_state = 0;
+    scanReqPending = false;
     memset(geo_location_cc, 0, sizeof(geo_location_cc));
     return ret;
 }
