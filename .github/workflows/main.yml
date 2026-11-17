@@ -19,7 +19,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [Sequoia, Tahoe]
+        # Sonoma14.0 = macOS 14.0-14.3 ABI, Sonoma14.4 = macOS 14.4+ ABI,
+        # Sequoia = macOS 15.2+ (Darwin 24.2.0-24.99.99) WCL ABI.
+        platform: [Sonoma14.0, Sonoma14.4, Sequoia]
         configuration: [Debug, Release]
     steps:
       - uses: actions/checkout@v4
@@ -41,6 +43,43 @@ jobs:
             SYMROOT="$PWD/build/products" OBJROOT="$PWD/build/obj" \
             CODE_SIGNING_ALLOWED=NO GIT_COMMIT="_$(git rev-parse --short HEAD)" \
             build > "logs/AirportItlwm-$PLATFORM.log" 2>&1 || { tail -100 "logs/AirportItlwm-$PLATFORM.log"; exit 1; }
+      - name: Verify kernel extension
+        env:
+          CONFIGURATION: ${{ matrix.configuration }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          kext="build/products/$CONFIGURATION/$PLATFORM/AirportItlwm.kext"
+          test -d "$kext" || { echo "FAIL: $kext missing"; exit 1; }
+          test -f "$kext/Contents/MacOS/AirportItlwm" || { echo "FAIL: kext binary missing"; exit 1; }
+          # Architecture must be x86_64 (Dell G3 3579).
+          lipo -info "$kext/Contents/MacOS/AirportItlwm" | tee /tmp/lipo.txt
+          grep -q "x86_64" /tmp/lipo.txt || { echo "FAIL: wrong architecture"; exit 1; }
+          grep -q "arm64" /tmp/lipo.txt && { echo "FAIL: arm64 leaked into build"; exit 1; } || true
+          # Bundle metadata sanity.
+          plutil -lint "$kext/Contents/Info.plist"
+          bundle_id=$(plutil -extract CFBundleIdentifier raw "$kext/Contents/Info.plist")
+          version=$(plutil -extract CFBundleVersion raw "$kext/Contents/Info.plist")
+          osbundle_libs=$(plutil -extract OSBundleLibraries json "$kext/Contents/Info.plist" | tr -d ' \n')
+          echo "bundle_id=$bundle_id version=$version"
+          [ "$bundle_id" = "com.zxystd.AirportItlwm" ] || { echo "FAIL: unexpected bundle id"; exit 1; }
+          # Required kext libraries present.
+          for lib in com.apple.iokit.IO80211Family com.apple.kpi.libkern com.apple.kpi.iokit; do
+            echo "$osbundle_libs" | grep -q "\"$lib\"" || { echo "FAIL: missing OSBundleLibrary $lib"; exit 1; }
+          done
+          case "$PLATFORM" in
+            Sequoia)
+              echo "$osbundle_libs" | grep -q "com.apple.iokit.IOSkywalkFamily" || { echo "FAIL: Sequoia build must link IOSkywalkFamily"; exit 1; } ;;
+          esac
+          # Embedded firmware must be present for the 9000-series (9462) and other families.
+          fwcount=$(ls "$kext/Contents/Resources" 2>/dev/null | wc -l | tr -d ' ')
+          echo "firmware_files=$fwcount"
+          [ "$fwcount" -ge 20 ] || { echo "FAIL: firmware resources incomplete"; exit 1; }
+          # Undefined symbols should be covered by declared OSBundleLibraries.
+          nm -u "$kext/Contents/MacOS/AirportItlwm" | head -200 > /tmp/undef.txt || true
+          echo "undefined_symbol_count=$(wc -l < /tmp/undef.txt)"
+          # Record checksum for release traceability.
+          shasum -a 256 "$kext/Contents/MacOS/AirportItlwm" | tee "logs/$PLATFORM-$CONFIGURATION.sha256"
       - name: Package kernel extension
         env:
           CONFIGURATION: ${{ matrix.configuration }}
@@ -54,10 +93,11 @@ jobs:
           configuration=$(printf '%s' "$CONFIGURATION" | tr '[:lower:]' '[:upper:]')
           suffix="v$version-$configuration-alpha-$short_sha"
           ditto -c -k --keepParent "$products/$PLATFORM/AirportItlwm.kext" "artifacts/AirportItlwm-$PLATFORM-$suffix.zip"
+          shasum -a 256 "artifacts/AirportItlwm-$PLATFORM-$suffix.zip" > "artifacts/AirportItlwm-$PLATFORM-$suffix.zip.sha256"
       - uses: actions/upload-artifact@v4
         with:
           name: AirportItlwm-${{ matrix.platform }}-${{ matrix.configuration }}
-          path: artifacts/AirportItlwm-${{ matrix.platform }}-*.zip
+          path: artifacts/AirportItlwm-${{ matrix.platform }}-*.zip*
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: always()
@@ -88,8 +128,15 @@ jobs:
           set -euo pipefail
           version=$(awk '/MODULE_VERSION =/ {gsub(/;/, "", $3); print $3; exit}' itlwm.xcodeproj/project.pbxproj)
           tag="v$version-alpha"
-          printf '%s\n\n' 'Development build. Hardware validation is required before daily use.' > ReleaseNotes.md
-          git log -5 --format='- %h %s' >> ReleaseNotes.md
+          {
+            echo 'Development build for the Dell G3 3579 (Intel Wireless-AC 9462).'
+            echo
+            echo 'Targets: macOS Sonoma 14.0-14.3 (Sonoma14.0 build), 14.4-14.x (Sonoma14.4 build), Sequoia 15.2+ (Sequoia build). All x86_64.'
+            echo 'Hardware validation is required before daily use.'
+            echo
+            echo 'Recent changes:'
+            git log -10 --format='- %h %s'
+          } > ReleaseNotes.md
           if gh release view "$tag" --json isPrerelease > current-release.json 2>/dev/null; then
             # Never replace a stable release with development artifacts.
             jq -e '.isPrerelease == true' current-release.json > /dev/null
@@ -99,7 +146,7 @@ jobs:
           else
             gh release create "$tag" --target "$GITHUB_SHA" --prerelease --title "$tag" --notes-file ReleaseNotes.md
           fi
-          gh release upload "$tag" artifacts/AirportItlwm-*.zip --clobber
+          gh release upload "$tag" artifacts/AirportItlwm-*.zip* --clobber
 
           # Remove obsolete assets only after the replacement set has uploaded.
           gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" \
