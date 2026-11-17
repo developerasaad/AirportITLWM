@@ -8106,6 +8106,15 @@ iwx_rx_packet_payload_len(const struct iwx_rx_packet *pkt)
 #define IWX_MIN_DBM    -100
 #define IWX_MAX_DBM    -33    /* realistic guess */
 
+/* Shared RSSI normalization constant used by the AirportItlwm native layer
+ * (WCL.cpp, AirportItlwmSkywalkInterface.cpp, AirportSTAIOCTL.cpp).
+ * Historically named IWM_MIN_DBM in the shared iwm header; retained here at
+ * the same value (-100) so the AX211/IWX backend continues to provide it to
+ * the native Airport integration after the non-AX211 HALs were removed. */
+#ifndef IWM_MIN_DBM
+#define IWM_MIN_DBM    -100
+#endif
+
 #define IWX_READ(sc, reg)                        \
     bus_space_read_4((sc)->sc_st, (sc)->sc_sh, (reg))
 
