@@ -11,11 +11,7 @@
 
 #include "Apple80211.h"
 #ifdef AIRPORT_WCL
-#if __IO80211_TARGET == __MAC_15_2
 #include <Airport/macOS15/FaultReporter.h>
-#else
-#include <Airport/macOS26/FaultReporter.h>
-#endif
 #endif
 
 #include "IOKit/network/IOGatedOutputQueue.h"
@@ -27,9 +23,7 @@
 #include <libkern/c++/OSMetaClass.h>
 #include <IOKit/IOFilterInterruptEventSource.h>
 
-#include "ItlIwm.hpp"
 #include "ItlIwx.hpp"
-#include "ItlIwn.hpp"
 
 #include "AirportItlwmEthernetInterface.hpp"
 

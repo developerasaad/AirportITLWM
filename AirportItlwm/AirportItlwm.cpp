@@ -74,14 +74,6 @@ IOService* AirportItlwm::probe(IOService *provider, SInt32 *score)
         isMatch = true;
         fHalService = new ItlIwx;
     }
-    if (!isMatch && ItlIwm::iwm_match(device)) {
-        isMatch = true;
-        fHalService = new ItlIwm;
-    }
-    if (!isMatch && ItlIwn::iwn_match(device)) {
-        isMatch = true;
-        fHalService = new ItlIwn;
-    }
     if (isMatch) {
         device->findPCICapability(PCI_CAP_ID_MSIX, &msixCap);
         if (msixCap)
@@ -144,8 +136,8 @@ void AirportItlwm::associateSSID(uint8_t *ssid, uint32_t ssid_len, const struct 
     ieee80211_disable_rsn(ic);
     ieee80211_disable_wep(ic);
     
-    struct ieee80211_wpaparams	 wpa;
-    struct ieee80211_nwkey		 nwkey;
+    struct ieee80211_wpaparams   wpa;
+    struct ieee80211_nwkey               nwkey;
     bzero(&wpa, sizeof(wpa));
     bzero(&nwkey, sizeof(nwkey));
     
@@ -162,7 +154,7 @@ void AirportItlwm::associateSSID(uint8_t *ssid, uint32_t ssid_len, const struct 
         ic->ic_flags |= IEEE80211_F_DESBSSID;
     }
     else {
-        memset(ic->ic_des_bssid, 0, IEEE80211_ADDR_LEN);	
+        memset(ic->ic_des_bssid, 0, IEEE80211_ADDR_LEN);        
         ic->ic_flags &= ~IEEE80211_F_DESBSSID;
     }
 
@@ -193,7 +185,7 @@ void AirportItlwm::associateSSID(uint8_t *ssid, uint32_t ssid_len, const struct 
     }
     if (authtype_upper & (APPLE80211_AUTHTYPE_WPA | APPLE80211_AUTHTYPE_WPA2 | APPLE80211_AUTHTYPE_SHA256_8021X)) {
         XYLog("%s %d\n", __FUNCTION__, __LINE__);
-        wpa.i_akms |= IEEE80211_WPA_AKM_8021X | IEEE80211_WPA_AKM_SHA256_8021X;	
+        wpa.i_akms |= IEEE80211_WPA_AKM_8021X | IEEE80211_WPA_AKM_SHA256_8021X; 
         wpa.i_enabled = 1;
         ieee80211_ioctl_setwpaparms(ic, &wpa);
     }
@@ -217,7 +209,7 @@ void AirportItlwm::associateSSID(uint8_t *ssid, uint32_t ssid_len, const struct 
 
 void AirportItlwm::setPTK(const u_int8_t *key, size_t key_len) {
     struct ieee80211com *ic = fHalService->get80211Controller();
-    struct ieee80211_node	* ni = ic->ic_bss;
+    struct ieee80211_node       * ni = ic->ic_bss;
     struct ieee80211_key *k;
     int keylen;
     
@@ -258,7 +250,7 @@ void AirportItlwm::setPTK(const u_int8_t *key, size_t key_len) {
 
 void AirportItlwm::setGTK(const u_int8_t *gtk, size_t key_len, u_int8_t kid, u_int8_t *rsc) {
     struct ieee80211com *ic = fHalService->get80211Controller();
-    struct ieee80211_node	* ni = ic->ic_bss;
+    struct ieee80211_node       * ni = ic->ic_bss;
     struct ieee80211_key *k;
     int keylen;
     

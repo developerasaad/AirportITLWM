@@ -9,9 +9,7 @@
 #include "IOPCIEDeviceWrapper.hpp"
 #include "Apple80211.h"
 
-#include "ItlIwm.hpp"
 #include "ItlIwx.hpp"
-#include "ItlIwn.hpp"
 
 #define super IOService
 OSDefineMetaClassAndStructors(IOPCIEDeviceWrapper, IOService);
@@ -71,14 +69,6 @@ probe(IOService *provider, SInt32 *score)
     if (ItlIwx::iwx_match(device)) {
         isMatch = true;
         fHalService = new ItlIwx;
-    }
-    if (!isMatch && ItlIwm::iwm_match(device)) {
-        isMatch = true;
-        fHalService = new ItlIwm;
-    }
-    if (!isMatch && ItlIwn::iwn_match(device)) {
-        isMatch = true;
-        fHalService = new ItlIwn;
     }
     if (isMatch) {
         XYLog("%s Found\n", __FUNCTION__);
