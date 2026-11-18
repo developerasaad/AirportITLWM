@@ -117,3 +117,14 @@ tagged `v2.4.0-ax211-reduced`.
 
 Upstream `LICENSE` (BSD-2-Clause) and `iwlwifi-firmware-license` are retained
 unchanged. Copyright and source provenance are preserved.
+
+
+## Forensic audit (2026-11-18)
+
+A source-level forensic audit of this reduced tree is preserved in
+[`research/ax211-audit/`](research/ax211-audit/DOSSIER.md) - 152 findings
+plus an 18-finding cross-platform correspondence analysis. Remote runtime
+evidence could not be collected in that environment; a sanitized,
+owner-runnable diagnostic kit for runtime confirmation is in
+[`research/ax211-audit/tools/`](research/ax211-audit/tools/README.md).
+No driver source was modified by the audit.
