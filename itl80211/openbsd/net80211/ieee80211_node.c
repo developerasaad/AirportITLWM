@@ -2920,8 +2920,18 @@ ieee80211_node_trigger_addba_req(struct ieee80211_node *ni, int tid)
 {
     if (ni->ni_tx_ba[tid].ba_state == IEEE80211_BA_INIT &&
         !timeout_pending(&ni->ni_addba_req_to[tid])) {
-        timeout_add_sec(&ni->ni_addba_req_to[tid],
-                        ni->ni_addba_req_intval[tid]);
+        /*
+         * Aggregation used to wait a full second before the first
+         * ADDBA, taxing every association and roam with legacy
+         * rates. Start almost immediately (Linux has no initial
+         * delay); failed attempts still back off exponentially up
+         * to 30 seconds (audit DRV-11D-008).
+         */
+        if (ni->ni_addba_req_intval[tid] <= 1)
+            timeout_add_msec(&ni->ni_addba_req_to[tid], 100);
+        else
+            timeout_add_sec(&ni->ni_addba_req_to[tid],
+                            ni->ni_addba_req_intval[tid]);
     }
 }
 

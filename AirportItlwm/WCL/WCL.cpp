@@ -654,6 +654,19 @@ void AirportItlwmSkywalkInterface::handleWCLLink(bool up)
     }
     if (up && joinPending && firstBeaconNotified)
         finishWCLJoin(0, 0, kIOReturnSuccess);
+    else if (up && !joinPending && !wclLinkIndicated) {
+        /*
+         * Port re-authorized outside a join: the driver recovered from
+         * an AP-initiated deauth (silent auto-reauth) or an internal
+         * roam. Tell airportd the link is back up instead of leaving it
+         * on the down notification (audit DRV-11C-007).
+         */
+        AirportWCL::LinkStatusEvent link = {};
+        memcpy(link.bssid, joinBSSID, sizeof(link.bssid));
+        link.up = 1;
+        wclLinkIndicated = true;
+        instance->postMessage(this, AirportWCL::LinkStatus, &link, sizeof(link), true);
+    }
     updateWCLLinkQuality(true);
 }
 

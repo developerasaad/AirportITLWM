@@ -8018,7 +8018,9 @@ iwx_rm_sta(struct iwx_softc *sc, struct iwx_node *in)
         struct ieee80211_tx_ba *ba = &ni->ni_tx_ba[i];
         if (ba->ba_state != IEEE80211_BA_AGREED)
             continue;
-        ieee80211_delba_request(ic, ni, 0, 1, i);
+        /* Transmit a real DELBA (reason 0 sends no frame and leaves the
+         * AP-side BA state stale; audit DRV-11D-010). */
+        ieee80211_delba_request(ic, ni, IEEE80211_REASON_UNSPECIFIED, 1, i);
     }
 
     return 0;
