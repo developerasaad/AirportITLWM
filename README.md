@@ -52,6 +52,19 @@ Output: `build/products/Debug/Sequoia/AirportItlwm.kext`.
   `ax211-baseline-validated` (commit `aa19316`) / branch `baseline-validated`.
 - **Reduced build:** AX211-only source reduction applied (see below). CI-verified
   and independently re-verified. **NOT yet hardware-verified** on the MSI.
+- **Firmware API 89:** the active line (`main`, mirrored to branch
+  `ax211-api89-modernization`). Replaces the embedded API 68 set with the exact
+  API 89 build validated on the target under Ubuntu 26.10
+  (`iwlwifi-so-a0-gf-a0-89.ucode`, version 89.d2579d43.0, plus its PNVM),
+  ports every reshaped command (scan v17, PHY context v4 + RLC, session
+  protection v2, TLC v4, BAID allocation, TVQM v3 queue config, segmented
+  PNVM), adds a command-ABI registry that rejects unsupported firmware, and
+  lands the audit's P0/P1 driver fixes (roaming un-latch, idle scan park,
+  association retry, BA leaks, watchdog gating, EAPOL length guard, and
+  others). Record: `research/ax211-api89/FIRMWARE-89.md` (provenance + ABI
+  delta) and `research/ax211-api89/STATUS.md` (per-workstream status and the
+  remaining-work register, incl. WPA3-SAE and 6 GHz). **CI-verified; NOT yet
+  hardware-verified.**
 - **Deferred (Tier 2):** IWX-internal specialization (Qu/AX200/9000 device-table
   entries + their iwlwifi-* firmware) is deferred pending the MSI's exact PCI
   device+subdevice identity (the device->adapter mapping is subdevice-dependent).
