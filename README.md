@@ -25,8 +25,8 @@ Baseline commit: `7204c69d1bfa7f5cc0f7864e08fb03e55d0ec29e`
 
 The previous Dell G3 3579 / Intel AC 9462 experiment that physically failed
 on its target is preserved as the recoverable reference
-`archive/dell-ac9462-v2.5.0-alpha` (tag `dell-ac9462-v2.5.0-alpha-final`,
-commit `812ea1c`). It is not under active development.
+`archive/dell-ac9462-v2.5.0-alpha` (commit `812ea1c`, also reachable in
+`main` history). It is not under active development.
 
 ## Build
 
@@ -34,6 +34,10 @@ Manual GitHub Actions workflow only:
 **Actions → "Build AX211 Sequoia Debug" → Run workflow** on `main`.
 Runner: `macos-15-intel`. MacKernelSDK is pinned at
 `3f750085caa17ec3a7880f11c11bf4f48cd6a164`.
+Inputs: `publish_release` (default `true`) publishes the verified build
+into the rolling release by replacing its assets;
+`release_tag` (default `v2.5.0-alpha`) selects the target release —
+it must already exist, because CI never creates tags or releases.
 
 Local build (Xcode + Python 3, MacKernelSDK checked out in `MacKernelSDK/`):
 
@@ -45,11 +49,30 @@ xcodebuild -project itlwm.xcodeproj -scheme AirportItlwm-Sequoia \
 
 Output: `build/products/Debug/Sequoia/AirportItlwm.kext`.
 
+## Releases
+
+Release-only publishing, no tag-based releases: the workflow never runs
+on tag events and never creates tags, releases, or refs. Exactly two
+releases are kept:
+
+| Release | Role | Assets |
+|---|---|---|
+| `v2.5.0-alpha` (prerelease) | **Rolling current build** — assets replaced in place by every successful dispatch build | newest `AX211-Sequoia-Debug` zip + sha256s only |
+| `v2.4.0-ax211-reduced` (prerelease) | Frozen historical release (reduced 2.4.0 line, hardware-handoff notes) | `f588ecd` build |
+
+The publish job deletes prior `AirportItlwm-*AX211-Sequoia-Debug-*`
+assets from the rolling release before uploading the fresh build, so the
+release always ships exactly the newest verified binary. Superseded
+releases/tags (`v2.4.0-baseline-ax211`, `dell-ac9462-v2.5.0-alpha-final`,
+`ax211-baseline-validated`) were removed on 2026-11-19; their commits
+remain reachable via branches and `main` history.
+
 ## Status
 
 - **Baseline:** clean, unmodified laobamac upstream Sequoia Debug build,
-  hardware-validated on the MSI (AX211 / Sequoia 15.8.2). Preserved at tag
-  `ax211-baseline-validated` (commit `aa19316`) / branch `baseline-validated`.
+  hardware-validated on the MSI (AX211 / Sequoia 15.8.2). Preserved on
+  branch `baseline-validated` (commit `aa19316`; standalone tag removed
+  in the 2026-11-19 release cleanup).
 - **Reduced build:** AX211-only source reduction applied (see below). CI-verified
   and independently re-verified. **NOT yet hardware-verified** on the MSI.
 - **Firmware API 89:** the active line (`main`, mirrored to branch

@@ -7,17 +7,42 @@ name: Build AX211 Sequoia Debug
 #   Config  : Debug
 #   Product : AirportItlwm.kext (native Airport/Skywalk/WCL integration)
 #
-# Manual only. No matrix, no push/PR/schedule triggers, no Release,
-# no Sonoma/Tahoe, no duplicate packaging jobs.
+# RELEASE POLICY — release-only, no tag-based releases:
+#   - Manual-only (workflow_dispatch). Never triggered by push, PR,
+#     schedule, or tag creation. CI NEVER creates tags, releases, or any
+#     git refs; release/tag lifecycle is curated by hand.
+#   - Exactly one rolling release carries the current build
+#     (input release_tag, default v2.5.0-alpha). On each successful
+#     build the publish job deletes this build family's stale assets
+#     from that release and uploads the fresh ones, so the rolling
+#     release always ships exactly the newest verified binary.
+#   - Release history is kept intentionally minimal: the rolling release
+#     plus designated historical releases (v2.4.0-ax211-reduced).
+#   - Set publish_release=false for build-only verification runs that
+#     must not touch the release.
 
 on:
   workflow_dispatch:
+    inputs:
+      publish_release:
+        description: "Replace rolling-release assets with this build"
+        required: true
+        type: choice
+        default: "true"
+        options:
+          - "true"
+          - "false"
+      release_tag:
+        description: "Existing release tag to publish into (CI never creates it)"
+        required: true
+        type: string
+        default: "v2.5.0-alpha"
 
 permissions:
   contents: read
 
 concurrency:
-  group: build-${{ github.workflow }}-${{ github.ref }}
+  group: build-ax211
   cancel-in-progress: false
 
 jobs:
@@ -131,10 +156,58 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: AirportItlwm-Sequoia-Debug
-          path: artifacts/AirportItlwm-*.zip*
+          path: artifacts/AirportItlwm-*
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: build-logs
           path: logs
+
+  publish:
+    name: Publish to rolling release (replace assets, no new tags)
+    needs: build
+    if: ${{ github.event.inputs.publish_release == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: AirportItlwm-Sequoia-Debug
+          path: dist
+      - name: Validate target release exists (CI never creates tags or releases)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" > /dev/null; then
+            echo "FAIL: release '$RELEASE_TAG' does not exist."
+            echo "This workflow is release-only: it never creates tags or releases."
+            echo "Create the release manually (on an existing tag) or pass another existing release_tag."
+            exit 1
+          fi
+          echo "target rolling release -> $RELEASE_TAG"
+      - name: Replace rolling release assets with this build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          # Stale assets from previous automated builds of this family are
+          # superseded once a new build is published; delete them first so
+          # the rolling release always carries exactly the newest build.
+          mapfile -t stale < <(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --json assets --jq '.assets[].name' \
+            | grep '^AirportItlwm-.*AX211-Sequoia-Debug-' || true)
+          for asset in "${stale[@]}"; do
+            echo "deleting stale asset: $asset"
+            gh release delete-asset "$RELEASE_TAG" "$asset" --repo "$GITHUB_REPOSITORY" --yes
+          done
+          echo "uploading fresh build assets:"
+          ls -la dist
+          gh release upload "$RELEASE_TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+          echo "rolling release assets after publish:"
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name'

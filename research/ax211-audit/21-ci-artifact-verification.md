@@ -118,3 +118,31 @@ The reduced-build release exists and is downloadable: the release asset is **byt
 | CI-010 | Artifact retention: both run-26 artifacts and all release assets are live (expire 2027-02-15); baseline run 22 artifacts also retained. No missing artifacts. | **VALIDATED CORRECT BEHAVIOR** |
 
 **Bottom line:** the reduced build is real, reproducible, hash-verified, and downloadable from the `v2.4.0-ax211-reduced` prerelease; its only actionable gaps for the hardware test handoff are (a) ad-hoc signing before `kmutil` load on Sequoia (CI-005), (b) tag-vs-build SHA provenance mismatch (CI-004, cosmetic), and (c) pending on-target validation (CI-009).
+
+## 2026-11-19 release policy revision (post-audit action)
+
+Duplicate release/tag publishing identified: the workflow lineage that
+produced the three 2026-11-17 releases ran on `push` events and created
+releases against tags, while the dispatch line produced a parallel build
+trail; two bare tags (`dell-ac9462-v2.5.0-alpha-final`,
+`ax211-baseline-validated`) and one superseded release
+(`v2.4.0-baseline-ax211`) compounded the duplication, and
+`v2.5.0-alpha` accumulated 12 stale assets from a dead multi-matrix
+configuration (Sequoia/Sonoma14.0/Sonoma14.4 x DEBUG/RELEASE at
+`812ea1c`).
+
+Resolution — release-only publishing, no tag-based releases:
+- Workflow redesigned: `workflow_dispatch` is the only trigger; CI never
+  creates tags, releases, or refs. A `publish` job replaces the
+  `AirportItlwm-*AX211-Sequoia-Debug-*` assets of the single rolling
+  release (`v2.5.0-alpha`, input-selectable, must pre-exist) with the
+  fresh build; `publish_release=false` gives build-only verification runs.
+- Deleted: release `v2.4.0-baseline-ax211` (+ its tag), tags
+  `dell-ac9462-v2.5.0-alpha-final` and `ax211-baseline-validated`, and
+  all 12 stale `812ea1c` assets from `v2.5.0-alpha`.
+- Kept: releases `v2.5.0-alpha` (rolling current) and
+  `v2.4.0-ax211-reduced` (frozen history), plus their tags — exactly
+  two releases and two tags remain.
+- Provenance: the CI-004-style tag-vs-build mismatch is structurally
+  eliminated — the rolling release asset is always built from the exact
+  commit the run checked out, and the asset filename embeds that SHA.
