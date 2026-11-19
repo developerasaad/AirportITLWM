@@ -78,7 +78,7 @@ void    ieee80211_input_ba(struct ieee80211com *, mbuf_t,
                            struct mbuf_list *);
 void    ieee80211_input_ba_flush(struct ieee80211com *, struct ieee80211_node *,
                                  struct ieee80211_rx_ba *, struct mbuf_list *);
-int	   ieee80211_input_ba_gap_skip(struct ieee80211_rx_ba *);
+int        ieee80211_input_ba_gap_skip(struct ieee80211_rx_ba *);
 void    ieee80211_input_ba_gap_timeout(void *arg);
 void    ieee80211_ba_move_window(struct ieee80211com *,
                                  struct ieee80211_node *, u_int8_t, u_int16_t, struct mbuf_list *);
@@ -753,20 +753,20 @@ ieee80211_defrag(struct ieee80211com *ic, mbuf_t m, int hdrlen)
     frag = rxseq & IEEE80211_SEQ_FRAG_MASK;
     
     if (frag == 0 && !(wh->i_fc[1] & IEEE80211_FC1_MORE_FRAG))
-        return m;	/* not fragmented */
+        return m;       /* not fragmented */
     
     if (frag == 0) {
         /* first fragment, setup entry in the fragment cache */
         if (++ic->ic_defrag_cur == IEEE80211_DEFRAG_SIZE)
             ic->ic_defrag_cur = 0;
         df = &ic->ic_defrag[ic->ic_defrag_cur];
-        mbuf_freem(df->df_m);	/* discard old entry */
+        mbuf_freem(df->df_m);   /* discard old entry */
         df->df_seq = seq;
         df->df_frag = 0;
         df->df_m = m;
         /* start receive MSDU timer of aMaxReceiveLifetime */
         timeout_add_sec(&df->df_to, 1);
-        return NULL;	/* MSDU or MMPDU not yet complete */
+        return NULL;    /* MSDU or MMPDU not yet complete */
     }
     
     /* find matching entry in the fragment cache */
@@ -799,7 +799,7 @@ ieee80211_defrag(struct ieee80211com *ic, mbuf_t m, int hdrlen)
     mbuf_pkthdr_setlen(df->df_m, mbuf_pkthdr_len(df->df_m) + mbuf_pkthdr_len(m));
     
     if (wh->i_fc[1] & IEEE80211_FC1_MORE_FRAG)
-        return NULL;	/* MSDU or MMPDU not yet complete */
+        return NULL;    /* MSDU or MMPDU not yet complete */
     
     /* MSDU or MMPDU complete */
     timeout_del(&df->df_to);
@@ -847,9 +847,9 @@ ieee80211_input_ba(struct ieee80211com *ic, mbuf_t m,
     if (ba->ba_timeout_val != 0)
         timeout_add_usec(&ba->ba_to, ba->ba_timeout_val);
     
-    if (SEQ_LT(sn, ba->ba_winstart)) {	/* SN < WinStartB */
+    if (SEQ_LT(sn, ba->ba_winstart)) {  /* SN < WinStartB */
         ic->ic_stats.is_ht_rx_frame_below_ba_winstart++;
-        mbuf_freem(m);	/* discard the MPDU */
+        mbuf_freem(m);  /* discard the MPDU */
         return;
     }
     if (ba->ba_buf == NULL) {
@@ -859,7 +859,7 @@ ieee80211_input_ba(struct ieee80211com *ic, mbuf_t m,
         mbuf_freem(m);
         return;
     }
-    if (SEQ_LT(ba->ba_winend, sn)) {	/* WinEndB < SN */
+    if (SEQ_LT(ba->ba_winend, sn)) {    /* WinEndB < SN */
         ic->ic_stats.is_ht_rx_frame_above_ba_winend++;
         count = (sn - ba->ba_winend) & 0xfff;
         if (count > ba->ba_winsize) {
@@ -874,7 +874,7 @@ ieee80211_input_ba(struct ieee80211com *ic, mbuf_t m,
                     ba->ba_winmiss = 0;
                 ba->ba_missedsn = sn;
                 ifp->netStat->inputErrors++;
-                mbuf_freem(m);	/* discard the MPDU */
+                mbuf_freem(m);  /* discard the MPDU */
                 return;
             }
             
@@ -2297,7 +2297,7 @@ ieee80211_recv_probe_req(struct ieee80211com *ic, mbuf_t m,
         ieee80211_clear_htcaps(ni);
     IEEE80211_SEND_MGMT(ic, ni, IEEE80211_FC0_SUBTYPE_PROBE_RESP, 0);
 }
-#endif	/* IEEE80211_STA_ONLY */
+#endif  /* IEEE80211_STA_ONLY */
 
 /*-
  * Authentication frame format:
@@ -2684,7 +2684,7 @@ end:
     } else
         ieee80211_node_join(ic, ni, resp);
 }
-#endif	/* IEEE80211_STA_ONLY */
+#endif  /* IEEE80211_STA_ONLY */
 
 /*-
  * (Re)Association response frame format:
@@ -2750,6 +2750,24 @@ ieee80211_recv_assoc_resp(struct ieee80211com *ic, mbuf_t m,
                   status, ether_sprintf((u_int8_t *)wh->i_addr3));
         if (ni != ic->ic_bss)
             ni->ni_fails++;
+#ifdef AIRPORT_WCL
+        else if (ic->ic_state == IEEE80211_S_ASSOC) {
+            /*
+             * Retry the association in place instead of stalling in
+             * S_ASSOC until the watchdog rescans and re-picks the same
+             * AP (audit DRV-11C-005). After three rejections the node
+             * is left poisoned (ni_fails) so candidate selection skips
+             * it and the rescan can pick a different AP.
+             */
+            ni->ni_fails++;
+            if (ni->ni_fails < 3)
+                ieee80211_new_state(ic, IEEE80211_S_AUTH,
+                                    IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
+            else
+                ieee80211_new_state(ic, IEEE80211_S_SCAN,
+                                    IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
+        }
+#endif
         ic->ic_stats.is_rx_auth_fail++;
         return;
     }
@@ -3632,7 +3650,7 @@ ieee80211_recv_pspoll(struct ieee80211com *ic, mbuf_t m,
     mq_enqueue(&ic->ic_pwrsaveq, m);
     ifp->if_start(ifp);
 }
-#endif	/* IEEE80211_STA_ONLY */
+#endif  /* IEEE80211_STA_ONLY */
 
 /*
  * Process an incoming BlockAckReq control frame (see 7.2.1.7).

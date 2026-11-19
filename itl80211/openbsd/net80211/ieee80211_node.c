@@ -1466,12 +1466,25 @@ ieee80211_end_scan(struct _ifnet *ifp)
         }
 #endif
         if (ic->ic_state != IEEE80211_S_RUN) {
+#ifdef AIRPORT_WCL
+            /*
+             * Idle park: with no join pending and no user-requested
+             * scan in flight, stop rescanning forever. A new WCL scan
+             * request or join restarts the loop through
+             * ieee80211_new_state(S_SCAN), which issues a fresh
+             * firmware scan when none is active (audit DRV-11C-003).
+             */
+            if (!ic->ic_wcl_scan_requested && !ic->ic_wcl_join_requested &&
+                ic->ic_des_esslen == 0) {
+                DPRINTF(("scan parked (idle)\n"));
+                return;
+            }
+#endif
             /*
              * Reset the list of channels to scan and scan the next mode
              * if nothing has been found.
              * If the device scans all bands in one fell swoop, return
              * current scan results to userspace regardless of mode.
-             * This will loop forever until an access point is found.
              */
             ieee80211_reset_scan(ifp);
             if (ieee80211_next_mode(ifp) == IEEE80211_MODE_AUTO ||

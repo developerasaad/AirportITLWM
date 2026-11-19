@@ -283,6 +283,15 @@ IOReturn AirportItlwmSkywalkInterface::beginWCLScan(apple80211ScanRequest *reque
             scanSource->cancelTimeout();
             return kIOReturnError;
         }
+    } else {
+        /*
+         * Parked idle in S_SCAN (no firmware scan active): issue a
+         * fresh scan through the newstate path (audit DRV-11C-003
+         * restart hook). When a firmware scan is actually in flight
+         * the driver ignores the redundant transition and the request
+         * is satisfied by the running scan.
+         */
+        ic->ic_newstate(ic, IEEE80211_S_SCAN, -1);
     }
     return kIOReturnSuccess;
 }
