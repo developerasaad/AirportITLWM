@@ -7,15 +7,18 @@ name: Build AX211 Sequoia Debug
 #   Config  : Debug
 #   Product : AirportItlwm.kext (native Airport/Skywalk/WCL integration)
 #
-# RELEASE POLICY — release-only, no tag-based releases:
+# RELEASE POLICY — standalone release publishing, no tag-based releases:
 #   - Manual-only (workflow_dispatch). Never triggered by push, PR,
-#     schedule, or tag creation. CI NEVER creates tags, releases, or any
-#     git refs; release/tag lifecycle is curated by hand.
-#   - Exactly one rolling release carries the current build
-#     (input release_tag, default v2.5.0-alpha). On each successful
-#     build the publish job deletes this build family's stale assets
-#     from that release and uploads the fresh ones, so the rolling
-#     release always ships exactly the newest verified binary.
+#     schedule, or tag events. CI NEVER creates tags, releases, or any
+#     git refs.
+#   - Exactly one rolling release carries the current build (input
+#     release_name, default v2.5.0-alpha). The publish job resolves the
+#     release BY NAME through the releases API and works purely on the
+#     release ID — no tag involvement anywhere. It deletes this build
+#     family's stale assets and uploads the fresh ones, so the release
+#     always ships exactly the newest verified binary.
+#   - The same-named lightweight tag is a fixed anchor required by
+#     GitHub's release model; it never moves and nothing builds from it.
 #   - Release history is kept intentionally minimal: the rolling release
 #     plus designated historical releases (v2.4.0-ax211-reduced).
 #   - Set publish_release=false for build-only verification runs that
@@ -32,8 +35,8 @@ on:
         options:
           - "true"
           - "false"
-      release_tag:
-        description: "Existing release tag to publish into (CI never creates it)"
+      release_name:
+        description: "Name of the existing standalone release to publish into"
         required: true
         type: string
         default: "v2.5.0-alpha"
@@ -165,7 +168,7 @@ jobs:
           path: logs
 
   publish:
-    name: Publish to rolling release (replace assets, no new tags)
+    name: Publish to standalone release (replace assets, no tags)
     needs: build
     if: ${{ github.event.inputs.publish_release == 'true' }}
     runs-on: ubuntu-latest
@@ -177,37 +180,49 @@ jobs:
         with:
           name: AirportItlwm-Sequoia-Debug
           path: dist
-      - name: Validate target release exists (CI never creates tags or releases)
+      - name: Resolve standalone release by name (release-ID API, no tags)
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event.inputs.release_tag }}
+          RELEASE_NAME: ${{ github.event.inputs.release_name }}
         run: |
           set -euo pipefail
-          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" > /dev/null; then
-            echo "FAIL: release '$RELEASE_TAG' does not exist."
-            echo "This workflow is release-only: it never creates tags or releases."
-            echo "Create the release manually (on an existing tag) or pass another existing release_tag."
+          id=$(gh api "repos/$GITHUB_REPOSITORY/releases" \
+            --jq ".[] | select(.name == \"$RELEASE_NAME\" or .tag_name == \"$RELEASE_NAME\") | .id" \
+            | head -n1)
+          if [ -z "$id" ]; then
+            echo "FAIL: no release named '$RELEASE_NAME'."
+            echo "This workflow is release-only: it never creates releases or tags."
+            echo "Create/restore the release manually or pass another existing release name."
             exit 1
           fi
-          echo "target rolling release -> $RELEASE_TAG"
-      - name: Replace rolling release assets with this build
+          echo "target standalone release -> $RELEASE_NAME (id $id)"
+          echo "RELEASE_ID=$id" >> "$GITHUB_ENV"
+      - name: Replace release assets with this build
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event.inputs.release_tag }}
         run: |
           set -euo pipefail
           # Stale assets from previous automated builds of this family are
           # superseded once a new build is published; delete them first so
-          # the rolling release always carries exactly the newest build.
-          mapfile -t stale < <(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
-            --json assets --jq '.assets[].name' \
-            | grep '^AirportItlwm-.*AX211-Sequoia-Debug-' || true)
-          for asset in "${stale[@]}"; do
-            echo "deleting stale asset: $asset"
-            gh release delete-asset "$RELEASE_TAG" "$asset" --repo "$GITHUB_REPOSITORY" --yes
+          # the release always carries exactly the newest build.
+          mapfile -t stale < <(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets" \
+            --jq '.[] | select(.name | startswith("AirportItlwm-") and contains("AX211-Sequoia-Debug-")) | "\(.id) \(.name)"')
+          for entry in "${stale[@]}"; do
+            asset_id=${entry%% *}
+            asset_name=${entry#* }
+            echo "deleting stale asset: $asset_name (id $asset_id)"
+            gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id"
           done
           echo "uploading fresh build assets:"
           ls -la dist
-          gh release upload "$RELEASE_TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
-          echo "rolling release assets after publish:"
-          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name'
+          for f in dist/*; do
+            name=$(basename "$f")
+            echo "uploading $name"
+            curl -fsS -X POST \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary @"$f" \
+              "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?name=$name" > /dev/null
+          done
+          echo "release assets after publish:"
+          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets" --jq '.[].name'

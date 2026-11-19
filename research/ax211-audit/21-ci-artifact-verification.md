@@ -146,3 +146,20 @@ Resolution — release-only publishing, no tag-based releases:
 - Provenance: the CI-004-style tag-vs-build mismatch is structurally
   eliminated — the rolling release asset is always built from the exact
   commit the run checked out, and the asset filename embeds that SHA.
+
+### Addendum: standalone release conversion + single-contributor normalization (same day)
+
+- GitHub's release model requires every published release to carry an
+  anchor tag ref (observed behavior: deleting the tag converts the
+  release to draft; un-drafting recreates the ref). "Standalone"
+  therefore means: releases are never created from tags, tags never
+  move, and CI never touches tags or releases — the publish job works
+  purely on the release ID via the releases API (asset replacement in
+  place).
+- Repository history normalized on 2026-11-19: all 893 commits on all
+  branches re-attributed to the repository owner (Asaad Khan
+  <224515802+developerasaad@users.noreply.github.com>), Co-authored-by
+  trailers stripped; every historical commit SHA changed accordingly.
+  Living documents (README, workflow) were remapped to the rewritten
+  SHAs; this forensic dossier intentionally preserves the
+  pre-normalization SHAs as the record of the state it audited.

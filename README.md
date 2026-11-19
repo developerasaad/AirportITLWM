@@ -20,12 +20,12 @@ adapter support is maintained.
 ## Source foundation
 
 Upstream: `https://github.com/laobamac/itlwm`
-Baseline commit: `7204c69d1bfa7f5cc0f7864e08fb03e55d0ec29e`
+Baseline commit: `4ea299cf3b8599d91c55f5eab477b1d03b6eae82`
 ("Merge pull request #36 from mingww64/fix/wpa3-transition-and-amsdu")
 
 The previous Dell G3 3579 / Intel AC 9462 experiment that physically failed
 on its target is preserved as the recoverable reference
-`archive/dell-ac9462-v2.5.0-alpha` (commit `812ea1c`, also reachable in
+`archive/dell-ac9462-v2.5.0-alpha` (commit `1dd6382`, also reachable in
 `main` history). It is not under active development.
 
 ## Build
@@ -36,8 +36,8 @@ Runner: `macos-15-intel`. MacKernelSDK is pinned at
 `3f750085caa17ec3a7880f11c11bf4f48cd6a164`.
 Inputs: `publish_release` (default `true`) publishes the verified build
 into the rolling release by replacing its assets;
-`release_tag` (default `v2.5.0-alpha`) selects the target release —
-it must already exist, because CI never creates tags or releases.
+`release_name` (default `v2.5.0-alpha`) selects the target release by
+name — it must already exist, because CI never creates releases or tags.
 
 Local build (Xcode + Python 3, MacKernelSDK checked out in `MacKernelSDK/`):
 
@@ -51,28 +51,36 @@ Output: `build/products/Debug/Sequoia/AirportItlwm.kext`.
 
 ## Releases
 
-Release-only publishing, no tag-based releases: the workflow never runs
-on tag events and never creates tags, releases, or refs. Exactly two
-releases are kept:
+Standalone release publishing — no tag-based releases. Releases are
+never created from tags and never triggered by tag events; the manual
+workflow dispatch is the only release path, and CI never creates tags,
+releases, or refs. Each release is a single fixed object whose assets
+are replaced in place. Exactly two releases are kept:
 
 | Release | Role | Assets |
 |---|---|---|
 | `v2.5.0-alpha` (prerelease) | **Rolling current build** — assets replaced in place by every successful dispatch build | newest `AX211-Sequoia-Debug` zip + sha256s only |
-| `v2.4.0-ax211-reduced` (prerelease) | Frozen historical release (reduced 2.4.0 line, hardware-handoff notes) | `f588ecd` build |
+| `v2.4.0-ax211-reduced` (prerelease) | Frozen historical release (reduced 2.4.0 line, hardware-handoff notes) | `207c20a` build (asset filename keeps the original `f588ecd`) |
 
-The publish job deletes prior `AirportItlwm-*AX211-Sequoia-Debug-*`
-assets from the rolling release before uploading the fresh build, so the
-release always ships exactly the newest verified binary. Superseded
-releases/tags (`v2.4.0-baseline-ax211`, `dell-ac9462-v2.5.0-alpha-final`,
-`ax211-baseline-validated`) were removed on 2026-11-19; their commits
-remain reachable via branches and `main` history.
+The publish job resolves the rolling release by name via the releases
+API (release-ID based, no tag involvement), deletes prior
+`AirportItlwm-*AX211-Sequoia-Debug-*` assets, and uploads the fresh
+build, so the release always ships exactly the newest verified binary.
+The same-named lightweight tags exist only as fixed anchors required by
+GitHub's release model; they never move and nothing is ever built or
+published from them. Superseded releases/tags (`v2.4.0-baseline-ax211`,
+`dell-ac9462-v2.5.0-alpha-final`, `ax211-baseline-validated`) were
+removed on 2026-11-19.
+
+History note (2026-11-19): the entire repository history was
+re-attributed to the repository owner (single-contributor
+normalization); all historical commit SHAs changed accordingly.
 
 ## Status
 
 - **Baseline:** clean, unmodified laobamac upstream Sequoia Debug build,
   hardware-validated on the MSI (AX211 / Sequoia 15.8.2). Preserved on
-  branch `baseline-validated` (commit `aa19316`; standalone tag removed
-  in the 2026-11-19 release cleanup).
+  branch `baseline-validated` (commit `346091b`).
 - **Reduced build:** AX211-only source reduction applied (see below). CI-verified
   and independently re-verified. **NOT yet hardware-verified** on the MSI.
 - **Firmware API 89:** the active line (`main`, mirrored to branch
@@ -134,8 +142,8 @@ the single `ItlIwx` branch; `ItlIwm.hpp`/`ItlIwn.hpp` includes removed; macOS26
 
 | Field | Value |
 |---|---|
-| Source commit | `f588ecd` (main HEAD) |
-| Reduction commits | `eb815e4` (reduction) + `e982fe9`/`a454f64`/`f588ecd` (build fixes) |
+| Source commit | `207c20a` (reduced-line HEAD at build time) |
+| Reduction commits | `f8d6c8c` (reduction) + `0548467`/`f88ecab`/`207c20a` (build fixes) |
 | Workflow run | https://github.com/developerasaad/AirportITLWM/actions/runs/44145096042 |
 | Runner | `macos-15-intel` |
 | Configuration | Sequoia / Debug / x86_64 |
