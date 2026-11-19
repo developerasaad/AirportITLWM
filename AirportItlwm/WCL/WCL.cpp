@@ -575,6 +575,15 @@ void AirportItlwmSkywalkInterface::finishWCLJoin(uint16_t status, uint16_t reaso
         clearWCLPMKSA();
         ic->ic_wcl_enterprise = false;
         explicit_bzero(ic->ic_psk, sizeof(ic->ic_psk));
+    } else {
+        /*
+         * The BSSID pin only steers the join attempt. Release it once
+         * the association is established so the background-scan roam
+         * engine can arm and candidate selection can consider sibling
+         * APs of the same ESS (audit DRV-11C-002); leaveWCLNetwork()
+         * and a subsequent join re-latch it.
+         */
+        fHalService->get80211Controller()->ic_flags &= ~IEEE80211_F_DESBSSID;
     }
 }
 
@@ -740,6 +749,16 @@ void AirportItlwmSkywalkInterface::handleWCLEvent(int code, void *data)
 #endif
                     updateWCLLinkQuality();
                 }
+            }
+            if (portAuthorized && beacon->node == ic->ic_bss &&
+                !IEEE80211_ADDR_EQ(beacon->node->ni_bssid, joinBSSID)) {
+                /*
+                 * The driver roamed internally to a sibling BSS of the
+                 * same ESS: follow the current BSSID so beacon/LQM
+                 * reporting and association state stay fresh instead of
+                 * freezing on the AP we joined (audit DRV-AP-005).
+                 */
+                memcpy(joinBSSID, beacon->node->ni_bssid, 6);
             }
             if (scanPending || joinPending || ic->ic_state == IEEE80211_S_SCAN ||
                 (portAuthorized && IEEE80211_ADDR_EQ(beacon->node->ni_bssid, joinBSSID)))

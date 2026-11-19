@@ -11,7 +11,7 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  */
-/*	$OpenBSD: ieee80211_pae_input.c,v 1.33 2019/09/02 12:54:21 stsp Exp $	*/
+/*      $OpenBSD: ieee80211_pae_input.c,v 1.33 2019/09/02 12:54:21 stsp Exp $   */
 
 /*-
  * Copyright (c) 2007,2008 Damien Bergamini <damien.bergamini@free.fr>
@@ -54,31 +54,31 @@
 #include <net80211/ieee80211_var.h>
 #include <net80211/ieee80211_priv.h>
 
-void	ieee80211_recv_4way_msg1(struct ieee80211com *,
+void    ieee80211_recv_4way_msg1(struct ieee80211com *,
                                  struct ieee80211_eapol_key *, struct ieee80211_node *);
 #ifndef IEEE80211_STA_ONLY
-void	ieee80211_recv_4way_msg2(struct ieee80211com *,
+void    ieee80211_recv_4way_msg2(struct ieee80211com *,
                                  struct ieee80211_eapol_key *, struct ieee80211_node *,
                                  const u_int8_t *);
 #endif
-int	ieee80211_must_update_group_key(struct ieee80211_key *, const uint8_t *,
+int     ieee80211_must_update_group_key(struct ieee80211_key *, const uint8_t *,
                                     int);
-void	ieee80211_recv_4way_msg3(struct ieee80211com *,
+void    ieee80211_recv_4way_msg3(struct ieee80211com *,
                                  struct ieee80211_eapol_key *, struct ieee80211_node *);
 #ifndef IEEE80211_STA_ONLY
-void	ieee80211_recv_4way_msg4(struct ieee80211com *,
+void    ieee80211_recv_4way_msg4(struct ieee80211com *,
                                  struct ieee80211_eapol_key *, struct ieee80211_node *);
-void	ieee80211_recv_4way_msg2or4(struct ieee80211com *,
+void    ieee80211_recv_4way_msg2or4(struct ieee80211com *,
                                     struct ieee80211_eapol_key *, struct ieee80211_node *);
 #endif
-void	ieee80211_recv_rsn_group_msg1(struct ieee80211com *,
+void    ieee80211_recv_rsn_group_msg1(struct ieee80211com *,
                                       struct ieee80211_eapol_key *, struct ieee80211_node *);
-void	ieee80211_recv_wpa_group_msg1(struct ieee80211com *,
+void    ieee80211_recv_wpa_group_msg1(struct ieee80211com *,
                                       struct ieee80211_eapol_key *, struct ieee80211_node *);
 #ifndef IEEE80211_STA_ONLY
-void	ieee80211_recv_group_msg2(struct ieee80211com *,
+void    ieee80211_recv_group_msg2(struct ieee80211com *,
                                   struct ieee80211_eapol_key *, struct ieee80211_node *);
-void	ieee80211_recv_eapol_key_req(struct ieee80211com *,
+void    ieee80211_recv_eapol_key_req(struct ieee80211com *,
                                      struct ieee80211_eapol_key *, struct ieee80211_node *);
 #endif
 
@@ -133,7 +133,11 @@ ieee80211_eapol_key_input(struct ieee80211com *ic, mbuf_t m,
     
     /* check key data length */
     paylen = BE_READ_2(key->paylen);
-    if (paylen > totlen - sizeof(*key))
+    /* Guard against unsigned wraparound: with totlen < sizeof(*key) the
+     * subtraction below used to promote to size_t and accept arbitrary
+     * paylen values, letting short frames pass oversized key-data
+     * lengths (audit REF-010, fixed upstream-in-heritage by ForbiddenItlwm). */
+    if (totlen < (int)sizeof(*key) || paylen > totlen - (int)sizeof(*key))
         goto done;
     
     info = BE_READ_2(key->info);
@@ -355,7 +359,7 @@ ieee80211_recv_4way_msg2(struct ieee80211com *ic,
     /* send message 3 to supplicant */
     (void)ieee80211_send_4way_msg3(ic, ni);
 }
-#endif	/* IEEE80211_STA_ONLY */
+#endif  /* IEEE80211_STA_ONLY */
 
 /* 
  * Check if a group key must be updated with a new GTK from an EAPOL frame.
@@ -824,7 +828,7 @@ ieee80211_recv_4way_msg2or4(struct ieee80211com *ic,
     else
         ieee80211_recv_4way_msg4(ic, key, ni);
 }
-#endif	/* IEEE80211_STA_ONLY */
+#endif  /* IEEE80211_STA_ONLY */
 
 /*
  * Process Message 1 of the RSN Group Key Handshake (sent by Authenticator).
@@ -1212,4 +1216,4 @@ ieee80211_recv_eapol_key_req(struct ieee80211com *ic,
          */
     }
 }
-#endif	/* IEEE80211_STA_ONLY */
+#endif  /* IEEE80211_STA_ONLY */

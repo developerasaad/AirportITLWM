@@ -93,11 +93,14 @@ jobs:
             grep -q "$fw" /tmp/fw-strings.txt || { echo "FAIL: firmware $fw not embedded"; exit 1; }
             echo "fw $fw -> embedded"
           done
-          # API 89 is the exclusive target: no legacy API 68 blobs may remain.
-          if grep -q -- "-68" /tmp/fw-strings.txt; then
-            echo "FAIL: legacy API 68 firmware string still embedded"; exit 1
-          fi
-          echo "no legacy api-68 firmware -> OK"
+          # API 89 is the exclusive target. The embedded set is generated
+          # from itlwm/firmware/ (fw_gen.sh), so assert the exact input set:
+          # exactly one ucode + one pnvm, and nothing else.
+          fw_files=$(ls itlwm/firmware | grep "^iwlwifi-" | sort | tr '\n' ' ')
+          echo "fw_files=$fw_files"
+          [ "$fw_files" = "iwlwifi-so-a0-gf-a0-89.ucode iwlwifi-so-a0-gf-a0.pnvm " ] || {
+            echo "FAIL: firmware directory must contain only the API 89 set"; exit 1; }
+          echo "exclusive api-89 firmware set -> OK"
           # AX211-family PCI device IDs must be present in the matching table.
           for devid in 0x51F08086 0x54F08086 0x7F708086; do
             grep -q "$devid" "$kext/Contents/Info.plist" || { echo "FAIL: AX211 device id $devid missing from IOPCIMatch"; exit 1; }
