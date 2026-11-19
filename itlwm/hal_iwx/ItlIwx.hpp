@@ -199,6 +199,7 @@ public:
     
     uint8_t    iwx_lookup_cmd_ver(struct iwx_softc *, uint8_t, uint8_t);
     uint8_t    iwx_lookup_notif_ver(struct iwx_softc *, uint8_t, uint8_t);
+    int        iwx_fw_check_abi(struct iwx_softc *);
     uint32_t    iwx_lmac_id(struct iwx_softc *, ieee80211_channel *);
     int    iwx_store_cscheme(struct iwx_softc *, uint8_t *, size_t);
     int    iwx_alloc_fw_monitor_block(struct iwx_softc *, uint8_t, uint8_t);
@@ -356,6 +357,7 @@ public:
     int    iwx_binding_cmd(struct iwx_softc *, struct iwx_node *, uint32_t);
     int    iwx_phy_ctxt_cmd_uhb(struct iwx_softc *, struct iwx_phy_ctxt *, uint8_t,
                                 uint8_t, uint32_t, uint32_t);
+    int    iwx_phy_send_rlc(struct iwx_softc *, struct iwx_phy_ctxt *, uint8_t, uint8_t);
     int    iwx_phy_ctxt_cmd_v3(struct iwx_softc *, struct iwx_phy_ctxt *, uint8_t,
                                 uint8_t, uint32_t, uint32_t);
     int    iwx_phy_ctxt_cmd(struct iwx_softc *, struct iwx_phy_ctxt *, uint8_t,
@@ -394,7 +396,8 @@ public:
     int    iwx_rm_sta_cmd(struct iwx_softc *, struct iwx_node *);
     int    iwx_rm_sta(struct iwx_softc *, struct iwx_node *);
     uint8_t iwx_umac_scan_fill_channels(struct iwx_softc *sc,
-                                struct iwx_scan_channel_cfg_umac *chan, int n_ssids, int bgscan);
+                                struct iwx_scan_channel_cfg_umac *chan, int n_ssids, int bgscan,
+                                uint8_t scan_ver);
     int iwx_fill_probe_req_v1(struct iwx_softc *sc, struct iwx_scan_probe_req_v1 *preq1);
     int    iwx_fill_probe_req(struct iwx_softc *, struct iwx_scan_probe_req *);
     int    iwx_config_umac_scan(struct iwx_softc *);

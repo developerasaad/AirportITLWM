@@ -1299,6 +1299,7 @@ enum iwx_msix_ivar_for_cause {
 #define IWX_UCODE_TLV_API_ADWELL_HB_DEF_N_AP    57
 #define IWX_UCODE_TLV_API_SCAN_EXT_CHAN_VER    58
 #define IWX_UCODE_TLV_API_BAND_IN_RX_DATA       59
+#define IWX_UCODE_TLV_API_SMART_FIFO_OFFLOAD    68
 #define IWX_NUM_UCODE_TLV_API            128
 
 #define IWX_UCODE_TLV_API_BITS \
@@ -1413,6 +1414,10 @@ enum iwx_msix_ivar_for_cause {
 #define IWX_UCODE_TLV_CAPA_EXTEND_SHARED_MEM_CFG    80
 #define IWX_UCODE_TLV_CAPA_LQM_SUPPORT            81
 #define IWX_UCODE_TLV_CAPA_LED_CMD_SUPPORT        88
+/* capabilities introduced with firmware API 89 (core86) */
+#define IWX_UCODE_TLV_CAPA_FRAGMENTED_PNVM_IMG    32
+#define IWX_UCODE_TLV_CAPA_BAID_ML_SUPPORT        63
+#define IWX_UCODE_TLV_CAPA_MLD_API_SUPPORT        110
 
 #define IWX_NUM_UCODE_TLV_CAPA 128
 
@@ -1889,6 +1894,98 @@ struct iwx_tx_queue_cfg_rsp {
 
 /* global key */
 #define IWX_WEP_KEY    0x20
+
+/*
+ * SCD_QUEUE_CONFIG_CMD (DATA_PATH group 0x17): TVQM queue add/remove/modify.
+ * Used when the firmware advertises command version 3 or newer.
+ */
+#define IWX_SCD_QUEUE_CONFIG_CMD    0x17
+enum iwx_scd_queue_cfg_operation {
+    IWL_SCD_QUEUE_ADD    = 0,
+    IWL_SCD_QUEUE_REMOVE = 1,
+    IWL_SCD_QUEUE_MODIFY = 2,
+};
+struct iwx_scd_queue_cfg_cmd {
+    uint32_t operation;
+    union {
+        struct {
+            uint32_t sta_mask;
+            uint8_t tid;
+            uint8_t reserved[3];
+            uint32_t flags;
+            uint32_t cb_size;
+            uint64_t bc_dram_addr;
+            uint64_t tfdq_dram_addr;
+        } __packed add;      /* TX_QUEUE_CFG_CMD_ADD_API_S_VER_1 */
+        struct {
+            uint32_t sta_mask;
+            uint32_t tid;
+        } __packed remove;   /* TX_QUEUE_CFG_CMD_REMOVE_API_S_VER_1 */
+        struct {
+            uint32_t old_sta_mask;
+            uint32_t tid;
+            uint32_t new_sta_mask;
+        } __packed modify;   /* TX_QUEUE_CFG_CMD_MODIFY_API_S_VER_1 */
+    } __packed u;
+} __packed; /* TX_QUEUE_CFG_CMD_OPERATION_API_U_VER_1 */
+
+/*
+ * RX_BAID_ALLOCATION_CONFIG_CMD (DATA_PATH group 0x16): RX BlockAck session
+ * BAID management, mandatory when the firmware advertises
+ * IWX_UCODE_TLV_CAPA_BAID_ML_SUPPORT.
+ */
+#define IWX_RX_BAID_ALLOCATION_CONFIG_CMD    0x16
+enum iwx_rx_baid_action {
+    IWL_RX_BAID_ACTION_ADD,
+    IWL_RX_BAID_ACTION_MODIFY,
+    IWL_RX_BAID_ACTION_REMOVE,
+};
+struct iwx_rx_baid_cfg_cmd {
+    uint32_t action;
+    union {
+        struct {
+            uint32_t sta_id_mask;
+            uint8_t tid;
+            uint8_t reserved[3];
+            uint16_t ssn;
+            uint16_t win_size;
+        } __packed alloc;     /* RX_BAID_ALLOCATION_ADD_CMD_API_S_VER_1 */
+        struct {
+            uint32_t sta_id_mask;
+            uint32_t tid;
+        } __packed remove;    /* RX_BAID_ALLOCATION_REMOVE_CMD_API_S_VER_2 */
+    } __packed u;
+} __packed; /* RX_BAID_ALLOCATION_CONFIG_CMD_API_S_VER_2 */
+
+/*
+ * RLC_CONFIG_CMD (DATA_PATH group 0x8): RX chains configuration,
+ * sent instead of phy-context rxchain_info when RLC version >= 2.
+ */
+#define IWX_RLC_CONFIG_CMD    0x8
+enum iwx_rlc_chain_info {
+    IWL_RLC_CHAIN_INFO_DRIVER_FORCE     = (1 << 0),
+    IWL_RLC_CHAIN_INFO_VALID            = 0x000e,
+    IWL_RLC_CHAIN_INFO_FORCE            = 0x0070,
+    IWL_RLC_CHAIN_INFO_FORCE_MIMO       = 0x0380,
+    IWL_RLC_CHAIN_INFO_COUNT            = 0x0c00,
+    IWL_RLC_CHAIN_INFO_MIMO_COUNT       = 0x3000,
+};
+struct iwx_rlc_properties {
+    uint32_t rx_chain_info;
+    uint32_t reserved;
+} __packed; /* RLC_PROPERTIES_S_VER_1 */
+struct iwx_rlc_config_cmd {
+    uint32_t phy_id;
+    struct iwx_rlc_properties rlc;
+    struct {
+        uint32_t chain_a_sad_mode;
+        uint32_t chain_b_sad_mode;
+        uint32_t mac_id;
+        uint32_t reserved;
+    } __packed sad;
+    uint8_t flags;
+    uint8_t reserved[3];
+} __packed; /* RLC_CONFIG_CMD_API_S_VER_2 */
 
 #define IWX_SHARED_MEM_CFG  0x25
 
@@ -6946,8 +7043,20 @@ struct iwx_scan_channel_cfg_umac {
             uint8_t iter_count;
             uint8_t iter_interval;
         } v2; /* SCAN_CHANNEL_CFG_S_VER{2,3,4} */
+        struct {
+            uint8_t psd_20;
+            uint8_t iter_count;
+            uint8_t iter_interval;
+        } v5; /* SCAN_CHANNEL_CFG_S_VER_5 (band in flags[31:30]) */
     };
 } __packed;
+
+/* band encoding in channel_config[].flags for SCAN_REQ_UMAC v17+ */
+#define IWX_CHAN_CFG_FLAGS_BAND_POS    30
+/* per-channel flags for 6 GHz scans (cmd v14+) */
+#define IWX_UHB_CHAN_CFG_FLAG_UNSOLICITED_PROBE_RES    (1u << 24)
+#define IWX_UHB_CHAN_CFG_FLAG_PSC_CHAN_NO_LISTEN       (1u << 25)
+#define IWX_UHB_CHAN_CFG_FLAG_FORCE_PASSIVE            (1u << 26)
 
 /**
  * struct iwx_scan_umac_schedule

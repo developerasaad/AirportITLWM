@@ -79,22 +79,27 @@ jobs:
           grep -q "<key>com.apple.driver.corecapture</key>" /tmp/kext-info.plist || { echo "FAIL: Sequoia build must link corecapture"; exit 1; }
           echo "sequoia skywalk/corecapture linkage -> OK"
           # Firmware is embedded in the Mach-O (FwBinary.cpp, zlib-compressed).
-          # Verify the AX211-relevant Gen3 firmware families are embedded.
-          # Binary size floor is 4MB: the reduced driver embeds only the iwlwifi-*
-          # (AX21x family) firmware after the iwm/iwn firmware was removed, so the
-          # binary is correctly ~7MB (down from ~16MB baseline). The firmware-
-          # strings check below is the authoritative verification.
+          # The AX211 build embeds exactly one firmware family: the API 89
+          # iwlwifi-so-a0-gf-a0 set (ucode + PNVM) pinned to build d2579d43
+          # (the revision validated on the target MSI Modern 14 C12MO under
+          # Ubuntu 26.10). Binary floor reflects one embedded family:
+          # ~1.74 MB raw firmware at ~2.2:1 zlib ratio plus driver code.
           binfile="$kext/Contents/MacOS/AirportItlwm"
           fwbytes=$(stat -f %z "$binfile")
           echo "binary_size=$fwbytes"
-          [ "$fwbytes" -gt 4000000 ] || { echo "FAIL: binary too small to contain firmware"; exit 1; }
+          [ "$fwbytes" -gt 1200000 ] || { echo "FAIL: binary too small to contain firmware"; exit 1; }
           strings "$binfile" > /tmp/fw-strings.txt
-          for fw in iwlwifi-so-a0-gf-a0-68 iwlwifi-ty-a0-gf-a0-68 iwlwifi-so-a0-gf4-a0-68 iwlwifi-so-a0-hr-b0-68 iwlwifi-so-a0-jf-b0-68; do
+          for fw in iwlwifi-so-a0-gf-a0-89 iwlwifi-so-a0-gf-a0.pnvm; do
             grep -q "$fw" /tmp/fw-strings.txt || { echo "FAIL: firmware $fw not embedded"; exit 1; }
             echo "fw $fw -> embedded"
           done
+          # API 89 is the exclusive target: no legacy API 68 blobs may remain.
+          if grep -q -- "-68" /tmp/fw-strings.txt; then
+            echo "FAIL: legacy API 68 firmware string still embedded"; exit 1
+          fi
+          echo "no legacy api-68 firmware -> OK"
           # AX211-family PCI device IDs must be present in the matching table.
-          for devid in 0x51F08086 0x51F18086 0x54F08086 0x7E408086 0x7F708086; do
+          for devid in 0x51F08086 0x54F08086 0x7F708086; do
             grep -q "$devid" "$kext/Contents/Info.plist" || { echo "FAIL: AX211 device id $devid missing from IOPCIMatch"; exit 1; }
             echo "devid $devid -> matched"
           done
