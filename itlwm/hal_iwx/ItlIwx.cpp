@@ -5007,8 +5007,8 @@ iwx_ampdu_tx_stop(struct ieee80211com *ic, struct ieee80211_node *ni, uint8_t ti
         cmd.u.remove.sta_mask = htole32(1 << IWX_STATION_ID);
         cmd.u.remove.tid = htole32(tid);
         that->iwx_send_cmd_pdu(sc,
-            that->iwx_cmd_id(IWX_SCD_QUEUE_CONFIG_CMD,
-                             IWX_DATA_PATH_GROUP, 0),
+            iwx_cmd_id(IWX_SCD_QUEUE_CONFIG_CMD,
+                       IWX_DATA_PATH_GROUP, 0),
             IWX_CMD_ASYNC, sizeof(cmd), &cmd);
         that->iwx_free_tx_ring(sc, &sc->txq[qid]);
         sc->txq[qid].qid = IWX_INVALID_QUEUE;
@@ -8059,10 +8059,10 @@ iwx_umac_scan_fill_channels(struct iwx_softc *sc,
                 IWX_PHY_BAND_24 : IWX_PHY_BAND_5;
             if (band_ver == 5) {
                 /* SCAN_REQ_UMAC v17+: band lives in flags[31:30] */
+                chan->v5.channel_num = channel_num;
                 chan->v5.psd_20 = 0; /* PSD applies to 6 GHz only */
                 chan->v5.iter_count = 1;
                 chan->v5.iter_interval = 0;
-                chan->channel_num = channel_num;
                 chan->flags |= htole32((uint32_t)band <<
                                        IWX_CHAN_CFG_FLAGS_BAND_POS);
             } else {

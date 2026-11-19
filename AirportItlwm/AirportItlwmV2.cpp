@@ -76,6 +76,11 @@ void AirportItlwm::releaseAll()
             watchdogTimer = NULL;
             fWatchdogWorkLoop->release();
             fWatchdogWorkLoop = NULL;
+        } else if (watchdogTimer) {
+            watchdogTimer->cancelTimeout();
+            _fWorkloop->removeEventSource(watchdogTimer);
+            watchdogTimer->release();
+            watchdogTimer = NULL;
         }
         _fWorkloop->release();
         _fWorkloop = NULL;
@@ -342,14 +347,6 @@ bool AirportItlwm::start(IOService *provider)
         releaseAll();
         return false;
     }
-    fWatchdogWorkLoop = IOWorkLoop::workLoop();
-    if (fWatchdogWorkLoop == NULL) {
-        XYLog("init watchdog workloop fail\n");
-        fHalService->detach(pciNub);
-        super::stop(pciNub);
-        releaseAll();
-        return false;
-    }
     watchdogTimer = IOTimerEventSource::timerEventSource(this, OSMemberFunctionCast(IOTimerEventSource::Action, this, &AirportItlwm::watchdogAction));
     if (!watchdogTimer) {
         XYLog("init watchdog fail\n");
@@ -358,7 +355,19 @@ bool AirportItlwm::start(IOService *provider)
         releaseAll();
         return false;
     }
-    fWatchdogWorkLoop->addEventSource(watchdogTimer);
+    /*
+     * The watchdog decrements MLME timers and can trigger state
+     * transitions, so it must run on the main workloop (serialized with
+     * the command gate and the RX path) instead of its own workloop
+     * (audit DRV-11C-004).
+     */
+    if (_fWorkloop->addEventSource(watchdogTimer) != kIOReturnSuccess) {
+        XYLog("add watchdog timer to main workloop fail\n");
+        fHalService->detach(pciNub);
+        super::stop(pciNub);
+        releaseAll();
+        return false;
+    }
     scanSource = IOTimerEventSource::timerEventSource(this, &fakeScanDone);
 #ifdef AIRPORT_WCL
     if (!scanSource || _fWorkloop->addEventSource(scanSource) != kIOReturnSuccess) {
@@ -1127,7 +1136,10 @@ setPOWER(OSObject *object,
         return kIOReturnError;
     IOLog("itlwm: setPOWER: num_radios[%d]  power_state(0:%u  1:%u  2:%u  3:%u)\n", pd->num_radios, pd->power_state[0], pd->power_state[1], pd->power_state[2], pd->power_state[3]);
     if (pd->num_radios > 0) {
-        bool isRunning = (fHalService->get80211Controller()->ic_ac.ac_if.if_flags & IFF_RUNNING) != 0;
+        /* The interface is only fully running when BOTH flags are set;
+         * UP-without-RUNNING (post-firmware-failure) must not skip the
+         * re-enable path (audit DRV-AP-006). */
+        bool isRunning = (fHalService->get80211Controller()->ic_ac.ac_if.if_flags & (IFF_UP | IFF_RUNNING)) == (IFF_UP | IFF_RUNNING);
         if (pd->power_state[0] == 0) {
             fHalService->get80211Controller()->ic_wcl_mac_reconfig = false;
             changePowerStateToPriv(kPowerStateOff);

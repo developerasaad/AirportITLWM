@@ -7044,6 +7044,7 @@ struct iwx_scan_channel_cfg_umac {
             uint8_t iter_interval;
         } v2; /* SCAN_CHANNEL_CFG_S_VER{2,3,4} */
         struct {
+            uint8_t channel_num;
             uint8_t psd_20;
             uint8_t iter_count;
             uint8_t iter_interval;

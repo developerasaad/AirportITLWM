@@ -987,9 +987,14 @@ static int convertNodeToScanResult(ItlHalService *fHalService, struct ieee80211_
         result->asr_ie_len = 0;
     }
     result->asr_beacon_int = fNextNodeToSend->ni_intval;
+    /* asr_nrates must be assigned before the loop: it was read from the
+     * just-cleared struct, leaving asr_rates[] empty while nrates was
+     * nonzero (audit DRV-AP-016). */
+    result->asr_nrates = fNextNodeToSend->ni_rates.rs_nrates;
+    if (result->asr_nrates > APPLE80211_MAX_RATES)
+        result->asr_nrates = APPLE80211_MAX_RATES;
     for (int i = 0; i < result->asr_nrates; i++ )
         result->asr_rates[i] = fNextNodeToSend->ni_rates.rs_rates[i];
-    result->asr_nrates = fNextNodeToSend->ni_rates.rs_nrates;
     result->asr_age = (uint32_t)(airport_up_time() - fNextNodeToSend->ni_age_ts);
     result->asr_cap = fNextNodeToSend->ni_capinfo;
     result->asr_channel.version = APPLE80211_VERSION;
@@ -1039,7 +1044,7 @@ getSCAN_RESULT(struct apple80211_scan_result *sr)
 //    XYLog("%s ni_bssid=%s ni_essid=%s channel=%d flags=%d asr_cap=%d asr_nrates=%d asr_ssid_len=%d asr_ie_len=%d asr_rssi=%d\n", __FUNCTION__, ether_sprintf(fNextNodeToSend->ni_bssid), fNextNodeToSend->ni_essid, ieee80211_chan2ieee(ic, fNextNodeToSend->ni_chan), ieeeChanFlag2apple(fNextNodeToSend->ni_chan->ic_flags, -1), fNextNodeToSend->ni_capinfo, fNextNodeToSend->ni_rates.rs_nrates, fNextNodeToSend->ni_esslen, fNextNodeToSend->ni_rsnie_tlv == NULL ? 0 : fNextNodeToSend->ni_rsnie_tlv_len, fNextNodeToSend->ni_rssi);
     convertNodeToScanResult(fHalService, fNextNodeToSend, sr);
     
-    fNextNodeToSend = RB_NEXT(ieee80211_tree, &HalService->get80211Controller()->ic_tree, fNextNodeToSend);
+    fNextNodeToSend = RB_NEXT(ieee80211_tree, &fHalService->get80211Controller()->ic_tree, fNextNodeToSend);
     if (fNextNodeToSend == NULL)
         fScanResultWrapping = true;
 
